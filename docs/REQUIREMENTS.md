@@ -210,8 +210,13 @@ survives byte-faithfully.
   (bottom-left) shows value→channel mappings per bound channel. Unbound = the
   node's own aesthetic attr; fully reversible. Persists as a `## Bindings` section
   (`- color: domain`), idempotent.
-- **Map ⇄ List dual view:** free-flow outline alongside the map; **drag-from-list-
-  to-parent**; attribute/shape/color editing in both.
+- **Map ⇄ List dual view.** ✅ **DONE (2026-07-15, verified).** Toggleable outline
+  panel (`list.ts`) left of the map: indented child-of forest, rows show the
+  node's *effective* color chip + type tag (same ChannelResolver as the map).
+  **Shared selection** (click a row ⇄ click a node; inspector serves both views).
+  **Drag a row onto another to re-parent** (cycle-guarded with a friendly status
+  message); **drop on the panel background to make a node a root**; double-click
+  to rename inline (inspector stays in sync).
 - **Dimension views:** show/hide/filter by edge type; "project" one chosen
   dimension onto the canvas.
 

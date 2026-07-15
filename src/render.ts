@@ -268,6 +268,11 @@ export class Renderer {
     return this.selectedId ? this.graph.nodes.get(this.selectedId) ?? null : null;
   }
 
+  /** Programmatic selection (e.g. from the list view). Fires onSelect. */
+  selectNode(id: string | null): void {
+    this.select(id);
+  }
+
   // --- typed cross-links (P1.5) --------------------------------------------
 
   /** Arm "link mode": the next node click draws a typed edge from the selected

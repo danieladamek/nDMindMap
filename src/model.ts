@@ -203,6 +203,13 @@ export class Graph {
     return this.addEdge({ source: childId, target: parentId, relation: CHILD_OF });
   }
 
+  /** Detach `childId` from its parent, making it a root. No-op if already one. */
+  clearParent(childId: string): void {
+    for (const [eid, e] of this.edges) {
+      if (e.relation === CHILD_OF && e.source === childId) this.edges.delete(eid);
+    }
+  }
+
   /** Is `maybeDescendant` inside the subtree rooted at `ancestorId`? */
   isDescendant(maybeDescendant: string, ancestorId: string): boolean {
     let cur = this.parentOf(maybeDescendant);

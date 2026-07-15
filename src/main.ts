@@ -11,6 +11,7 @@ import { Graph } from "./model.js";
 import { parse, stringify, type MindMapDoc } from "./serialize.js";
 import { Renderer } from "./render.js";
 import { Inspector } from "./inspector.js";
+import { ListView } from "./list.js";
 
 const SEED = `# nDMindMap: Welcome
 
@@ -47,6 +48,7 @@ toolbar.innerHTML = `
   <button id="add" title="Add a root node">+ Root</button>
   <button id="link" title="Link the selected node to another (typed relationship) — or press L">+ Link</button>
   <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
+  <label class="ndmm-toggle"><input type="checkbox" id="list" checked> List</label>
   <label class="ndmm-toggle"><input type="checkbox" id="grid"> Grid</label>
   <span class="ndmm-bindgroup" title="Bind a visual channel to a dimension (global attribution); unbound = aesthetic">
     Bind:
@@ -68,13 +70,44 @@ const legend = document.createElement("div");
 legend.className = "ndmm-legend";
 legend.style.display = "none";
 stage.append(legend);
-body.append(stage);
-app.append(toolbar, body);
 
 const status = toolbar.querySelector<HTMLSpanElement>("#status")!;
 status.textContent = IDLE_HINT;
 
-const inspector = new Inspector(body, { onEdit: () => { renderer.relayout(); refreshBindingUI(); } });
+let selectedNodeId: string | null = null;
+
+// List (outline) view — shares selection with the map.
+const list = new ListView(body, {
+  onSelect: (id) => renderer.selectNode(id),
+  onReparent: (childId, parentId) => {
+    try {
+      if (parentId) doc.graph.setParent(childId, parentId);
+      else doc.graph.clearParent(childId);
+      renderer.relayout();
+      refreshUI();
+    } catch (err) {
+      status.textContent = `can't re-parent: ${(err as Error).message}`;
+    }
+  },
+  onRename: (id, label) => {
+    const n = doc.graph.nodes.get(id);
+    if (n && label) n.label = label;
+    renderer.relayout();
+    refreshUI();
+    if (n && id === selectedNodeId) inspector.show(n); // keep the panel in sync
+  },
+});
+
+body.append(stage);
+app.append(toolbar, body);
+
+const inspector = new Inspector(body, { onEdit: () => { renderer.relayout(); refreshUI(); } });
+
+/** One refresh for everything that mirrors graph state (bind UI, legend, list). */
+function refreshUI(): void {
+  refreshBindingUI();
+  list.render(doc.graph, selectedNodeId);
+}
 
 // --- global attribution (bind color/shape/size to a dimension) -------------
 
@@ -155,7 +188,7 @@ for (const [channel, sel] of Object.entries(bindSelects) as ["color" | "shape" |
     if (sel.value) doc.graph.bindings[channel] = sel.value;
     else delete doc.graph.bindings[channel];
     renderer.relayout();
-    refreshBindingUI();
+    refreshUI();
   });
 }
 
@@ -163,10 +196,12 @@ function mount(graph: Graph): Renderer {
   inspector.setGraph(graph);
   return new Renderer(stage, graph, {
     onSelect: (n) => {
+      selectedNodeId = n?.id ?? null;
       status.textContent = n
         ? `${n.label || "(unnamed)"} — Tab child · Enter sibling · F2 rename · L link`
         : IDLE_HINT;
       inspector.show(n);
+      list.render(graph, selectedNodeId);
     },
     onSelectEdge: (edge) => {
       if (!edge) { inspector.show(null); status.textContent = IDLE_HINT; return; }
@@ -183,13 +218,13 @@ function mount(graph: Graph): Renderer {
     onLinkModeChange: (active) => {
       if (active) status.textContent = "Link mode — click a target node (Esc to cancel)";
     },
-    onChange: () => refreshBindingUI(),
+    onChange: () => refreshUI(),
   });
 }
 
 renderer = mount(doc.graph);
 renderer.focusCanvas();
-refreshBindingUI();
+refreshUI();
 
 // --- toolbar --------------------------------------------------------------
 
@@ -208,6 +243,11 @@ toolbar.querySelector("#tidy")!.addEventListener("click", () => renderer.tidy())
 
 toolbar.querySelector<HTMLInputElement>("#grid")!.addEventListener("change", (e) => {
   renderer.setGrid((e.target as HTMLInputElement).checked);
+});
+
+toolbar.querySelector<HTMLInputElement>("#list")!.addEventListener("change", (e) => {
+  list.setVisible((e.target as HTMLInputElement).checked);
+  if (list.visible) list.render(doc.graph, selectedNodeId);
 });
 
 toolbar.querySelector("#export")!.addEventListener("click", () => {
@@ -232,8 +272,9 @@ toolbar.querySelector("#import")!.addEventListener("click", () => {
     renderer.destroy();
     renderer = mount(doc.graph);
     inspector.show(null);
+    selectedNodeId = null;
     renderer.focusCanvas();
-    refreshBindingUI();
+    refreshUI();
     status.textContent = `imported: ${doc.title}`;
   });
   input.click();
