@@ -1,0 +1,19 @@
+{
+  "name": "ndmindmap",
+  "version": "0.0.1",
+  "private": true,
+  "description": "nDMindMap — a markdown-native, graph-shaped idea-capture engine (a GrandsTech product).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "author": "DanielAdamek <danieladamek@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0"
+  }
+}

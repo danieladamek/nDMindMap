@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Agent / local
+.claude/
+.env
+.env.local
+
+# Working docs (personal backlog, not shipped)
+BACKLOG.md
