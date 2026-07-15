@@ -67,6 +67,7 @@ status.textContent = IDLE_HINT;
 const inspector = new Inspector(body, { onEdit: () => renderer.relayout() });
 
 function mount(graph: Graph): Renderer {
+  inspector.setGraph(graph);
   return new Renderer(stage, graph, {
     onSelect: (n) => {
       status.textContent = n

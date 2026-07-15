@@ -8,8 +8,11 @@
  * ever touches the one node it was handed.
  */
 
-import type { GraphNode, GraphEdge, Scalar } from "./model.js";
+import type { Graph, GraphNode, GraphEdge, Scalar } from "./model.js";
 import { SHAPES, COLORS, SIZES, customAttrs, nodeShape, nodeColor, nodeSizeKey, nodeType } from "./visuals.js";
+
+/** Visual-channel keys a node type carries as defaults. */
+const CHANNEL_KEYS = ["color", "shape", "size"] as const;
 
 export interface InspectorOptions {
   onEdit: () => void;
@@ -37,12 +40,18 @@ export class Inspector {
   private node: GraphNode | null = null;
   private edge: GraphEdge | null = null;
   private edgeCtx: EdgeContext | null = null;
+  private graph: Graph | null = null;
 
   constructor(host: HTMLElement, private opts: InspectorOptions) {
     this.el = document.createElement("aside");
     this.el.className = "ndmm-inspector";
     host.append(this.el);
     this.renderEmpty();
+  }
+
+  /** Point the inspector at the current graph (its type registry). */
+  setGraph(graph: Graph): void {
+    this.graph = graph;
   }
 
   show(node: GraphNode | null): void {
@@ -98,18 +107,46 @@ export class Inspector {
     labelInput.addEventListener("input", () => { n.label = labelInput.value; this.edited(false); });
     labelField.append(labelInput);
 
-    // Type
+    // Type — a combobox over registered node types, with a Promote action.
     const typeField = this.field("Type");
     const typeInput = document.createElement("input");
     typeInput.className = "insp-input";
     typeInput.placeholder = "e.g. concept, biomarker…";
     typeInput.value = nodeType(n);
-    typeInput.addEventListener("input", () => {
+    typeInput.setAttribute("list", "ndmm-nodetype-list");
+    const datalist = document.createElement("datalist");
+    datalist.id = "ndmm-nodetype-list";
+    for (const t of this.graph?.nodeTypes.keys() ?? []) {
+      const o = document.createElement("option");
+      o.value = t;
+      datalist.append(o);
+    }
+    typeInput.addEventListener("change", () => {
       const v = typeInput.value.trim();
-      if (v) n.attrs.type = v; else delete n.attrs.type;
-      this.edited(false);
+      if (v) {
+        n.attrs.type = v;
+        const def = this.graph?.nodeTypes.get(v);
+        if (def) this.applyTypeDefaults(n, def.attrs); // assigning a known type styles the node
+      } else delete n.attrs.type;
+      this.edited();
     });
-    typeField.append(typeInput);
+    const promote = document.createElement("button");
+    promote.type = "button";
+    promote.className = "insp-promote";
+    const known = !!this.graph?.nodeTypes.has(nodeType(n));
+    promote.textContent = nodeType(n) ? (known ? "Update type defaults" : "★ Promote to type") : "★ Promote to type";
+    promote.disabled = !nodeType(n);
+    promote.title = "Register this type globally, capturing the node's color/shape as defaults";
+    promote.addEventListener("click", () => {
+      const v = typeInput.value.trim();
+      if (!v || !this.graph) return;
+      const defaults: Record<string, Scalar> = {};
+      for (const k of CHANNEL_KEYS) if (k in n.attrs) defaults[k] = n.attrs[k];
+      this.graph.registerNodeType(v, defaults);
+      n.attrs.type = v;
+      this.edited();
+    });
+    typeField.append(typeInput, datalist, promote);
 
     // Shape
     const shapeField = this.field("Shape");
@@ -176,32 +213,62 @@ export class Inspector {
     this.el.append(labelField, typeField, shapeField, colorField, sizeField, attrsField, idNote);
   }
 
+  /** Copy a node type's default visual channels onto the node. */
+  private applyTypeDefaults(n: GraphNode, typeAttrs: Record<string, Scalar>): void {
+    for (const k of CHANNEL_KEYS) if (k in typeAttrs) n.attrs[k] = typeAttrs[k];
+  }
+
   private renderEdge(focusRelation = false): void {
     const e = this.edge;
     const ctx = this.edgeCtx;
     if (!e || !ctx) return;
     this.el.replaceChildren();
 
-    // Relation type
+    // Relation type — combobox over registered + in-use types, with Promote.
+    const registered = [...(this.graph?.edgeTypes.keys() ?? [])];
+    const allTypes = [...new Set([...registered, ...ctx.relationTypes])].sort();
+
     const relField = this.field("Relation");
     const relInput = document.createElement("input");
     relInput.className = "insp-input";
     relInput.placeholder = "e.g. proxy-for, measured-by…";
     relInput.value = e.relation;
+    relInput.setAttribute("list", "ndmm-edgetype-list");
+    const datalist = document.createElement("datalist");
+    datalist.id = "ndmm-edgetype-list";
+    for (const t of allTypes) {
+      const o = document.createElement("option");
+      o.value = t;
+      datalist.append(o);
+    }
     relInput.addEventListener("input", () => {
       e.relation = relInput.value.trim() || "relates-to";
       this.edited(false);
     });
-    relField.append(relInput);
+    const promote = document.createElement("button");
+    promote.type = "button";
+    promote.className = "insp-promote";
+    const known = this.graph?.edgeTypes.has(e.relation);
+    promote.textContent = known ? "Registered edge type" : "★ Promote to type";
+    promote.disabled = !!known;
+    promote.title = "Register this relation as a global, selectable edge type";
+    promote.addEventListener("click", () => {
+      const v = relInput.value.trim();
+      if (!v || !this.graph) return;
+      this.graph.registerEdgeType(v);
+      e.relation = v;
+      this.edited();
+    });
+    relField.append(relInput, datalist, promote);
 
-    // Quick-pick chips of relation types already in the map (promotion-friendly).
-    if (ctx.relationTypes.length) {
+    // Quick-pick chips (registered ∪ in-use).
+    if (allTypes.length) {
       const chips = document.createElement("div");
       chips.className = "insp-chips";
-      for (const t of ctx.relationTypes) {
+      for (const t of allTypes) {
         const c = document.createElement("button");
         c.type = "button";
-        c.className = "insp-chip" + (t === e.relation ? " is-active" : "");
+        c.className = "insp-chip" + (t === e.relation ? " is-active" : "") + (this.graph?.edgeTypes.has(t) ? " is-registered" : "");
         c.textContent = t;
         c.addEventListener("click", () => { e.relation = t; this.edited(); });
         chips.append(c);

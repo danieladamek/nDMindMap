@@ -193,13 +193,19 @@ inspector → add one non-`child-of` typed edge → export, reload → everythin
 survives byte-faithfully.
 
 ### Phase 2 — The nD layer (dimensions, promotion, binding, dual view)
-- **Type registries:** node types and edge types as first-class, definable,
-  parameterized objects (not just free text).
-- **Promotion:** convert a one-off case-by-case type → a global selectable type
-  (symmetric for nodes and edges).
-- **Visual-channel ↔ meaning binding (global attribution):** bind color/shape/size
-  to an attribute or type globally (e.g. color = domain, size = confidence) with a
-  **legend**; bindings optional/reversible; unbound = aesthetic.
+- **Type registries.** ✅ **DONE (2026-07-15, verified).** Node types & edge types
+  are first-class, parameterized `TypeDef`s in the graph, persisted as `## Node
+  Types` / `## Edge Types` sections (idempotent). Node types carry default visual
+  channels; edge types carry params.
+- **Promotion.** ✅ **DONE (2026-07-15, verified).** Inspector Type/Relation are
+  comboboxes (datalist of registered types) with a **★ Promote** action that
+  registers the current one-off — node promotion captures the node's color/shape as
+  the type's defaults. Assigning a registered node type applies those defaults
+  (verified: promote `pillar`=violet-diamond, assign to another node → it restyles).
+- **Visual-channel ↔ meaning binding (global attribution).** ⟵ _next._ Bind
+  color/shape/size to an attribute or type **globally** (e.g. color = domain, size =
+  confidence) with a **legend**; live (changing the binding re-styles all instances,
+  vs. today's assignment-time copy); optional/reversible; unbound = aesthetic.
 - **Map ⇄ List dual view:** free-flow outline alongside the map; **drag-from-list-
   to-parent**; attribute/shape/color editing in both.
 - **Dimension views:** show/hide/filter by edge type; "project" one chosen

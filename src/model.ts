@@ -36,6 +36,17 @@ export interface GraphEdge {
 /** The default relationship: an edge `[child] --child-of--> [parent]`. */
 export const CHILD_OF = "child-of";
 
+/**
+ * A registered, first-class type in the document's schema — a node type or an
+ * edge type promoted from a one-off. `attrs` carries the type's parameters; for
+ * node types this may include default visual channels (color/shape) captured at
+ * promotion and applied when the type is assigned to another node.
+ */
+export interface TypeDef {
+  name: string;
+  attrs: Record<string, Scalar>;
+}
+
 let counter = 0;
 /** Small, dependency-free id generator. Stable within a session. */
 export function newId(prefix = "n"): string {
@@ -46,6 +57,23 @@ export function newId(prefix = "n"): string {
 export class Graph {
   readonly nodes = new Map<string, GraphNode>();
   readonly edges = new Map<string, GraphEdge>();
+  /** The schema registry — types promoted from one-offs (insertion-ordered). */
+  readonly nodeTypes = new Map<string, TypeDef>();
+  readonly edgeTypes = new Map<string, TypeDef>();
+
+  /** Register (or update) a global node type. Returns the stored def. */
+  registerNodeType(name: string, attrs: Record<string, Scalar> = {}): TypeDef {
+    const t: TypeDef = { name, attrs: { ...attrs } };
+    this.nodeTypes.set(name, t);
+    return t;
+  }
+
+  /** Register (or update) a global edge type. Returns the stored def. */
+  registerEdgeType(name: string, attrs: Record<string, Scalar> = {}): TypeDef {
+    const t: TypeDef = { name, attrs: { ...attrs } };
+    this.edgeTypes.set(name, t);
+    return t;
+  }
 
   /** Generate an id not already present in `existing`. Guards against the
    *  monotonic `newId` counter colliding with ids loaded from a file (e.g. a

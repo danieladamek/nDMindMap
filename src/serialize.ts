@@ -63,18 +63,28 @@ export function stringify(doc: MindMapDoc): string {
   for (const e of doc.graph.edges.values()) {
     lines.push(`- [${e.source}] --${e.relation}--> [${e.target}]${stringifyAttrs(e.attrs)}`);
   }
+  // The schema: registered types (only emitted when present).
+  if (doc.graph.nodeTypes.size) {
+    lines.push("", "## Node Types", "");
+    for (const t of doc.graph.nodeTypes.values()) lines.push(`- ${t.name}${stringifyAttrs(t.attrs)}`);
+  }
+  if (doc.graph.edgeTypes.size) {
+    lines.push("", "## Edge Types", "");
+    for (const t of doc.graph.edgeTypes.values()) lines.push(`- ${t.name}${stringifyAttrs(t.attrs)}`);
+  }
   lines.push("");
   return lines.join("\n");
 }
 
 const NODE_RE = /^-\s*\[([^\]]+)\]\s*(.*?)(?:\s*@(-?\d+),(-?\d+))?(?:\s*\{(.*)\})?\s*$/;
 const EDGE_RE = /^-\s*\[([^\]]+)\]\s*--(.*?)-->\s*\[([^\]]+)\](?:\s*\{(.*)\})?\s*$/;
+const TYPE_RE = /^-\s*(.*?)(?:\s*\{(.*)\})?\s*$/;
 
 /** Parse `.ndmm.md` text back into a doc. Tolerant of blank lines and prose. */
 export function parse(text: string): MindMapDoc {
   const graph = new Graph();
   let title = "Untitled";
-  let section: "nodes" | "edges" | null = null;
+  let section: "nodes" | "edges" | "nodetypes" | "edgetypes" | null = null;
 
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -85,6 +95,9 @@ export function parse(text: string): MindMapDoc {
       title = titleMatch[1].trim() || title;
       continue;
     }
+    // Type sections must be checked before the generic node/edge headers.
+    if (/^##\s*node\s*types/i.test(line)) { section = "nodetypes"; continue; }
+    if (/^##\s*edge\s*types/i.test(line)) { section = "edgetypes"; continue; }
     if (/^##\s*nodes/i.test(line)) { section = "nodes"; continue; }
     if (/^##\s*edges/i.test(line)) { section = "edges"; continue; }
     if (line.startsWith("#")) { section = null; continue; }
@@ -116,6 +129,12 @@ export function parse(text: string): MindMapDoc {
       if (graph.nodes.has(edge.source) && graph.nodes.has(edge.target)) {
         graph.addEdge(edge);
       }
+    } else if (section === "nodetypes") {
+      const m = line.match(TYPE_RE);
+      if (m && m[1].trim()) graph.registerNodeType(m[1].trim(), parseAttrs(m[2]));
+    } else if (section === "edgetypes") {
+      const m = line.match(TYPE_RE);
+      if (m && m[1].trim()) graph.registerEdgeType(m[1].trim(), parseAttrs(m[2]));
     }
   }
 

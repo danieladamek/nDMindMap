@@ -155,6 +155,16 @@ body {
 }
 .insp-chip:hover { border-color: var(--crosslink); }
 .insp-chip.is-active { background: var(--crosslink); color: #fff; border-color: var(--crosslink); }
+.insp-chip.is-registered { border-style: solid; border-color: var(--accent); }
+.insp-chip.is-registered::before { content: "★ "; color: var(--accent); font-size: 9px; }
+.insp-chip.is-active.is-registered::before { color: #fff; }
+
+.insp-promote {
+  font: inherit; font-size: 12px; color: var(--accent); background: transparent;
+  border: 1px dashed var(--node-stroke); border-radius: 6px; padding: 6px; cursor: pointer; margin-top: 6px; width: 100%;
+}
+.insp-promote:hover:not(:disabled) { border-color: var(--accent); }
+.insp-promote:disabled { color: var(--muted); cursor: default; opacity: 0.7; }
 .insp-conn { font-size: 13px; color: var(--text); }
 .insp-delete-edge {
   font: inherit; font-size: 12px; color: var(--pin); background: transparent;
