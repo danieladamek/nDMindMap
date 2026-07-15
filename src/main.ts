@@ -1,39 +1,42 @@
 /**
- * nDMindMap app shell — wires the graph model, serializer, and renderer into a
- * minimal working capture surface.
+ * nDMindMap app shell — Phase 1.
  *
- * This is scaffold, not the finished product: enough to prove the loop
- * (capture → graph → readable file → back) runs end to end. The interesting
- * work lives in model.ts / serialize.ts / render.ts.
+ * Keyboard-first capture on a left-to-right mind-map tree. The Renderer owns the
+ * capture loop and selection; the shell owns the toolbar, persistence, and the
+ * seed document. The `.ndmm.md` file remains the source of truth.
  */
 
 import "./style.css";
-import { Graph, type GraphNode } from "./model.js";
+import { Graph } from "./model.js";
 import { parse, stringify, type MindMapDoc } from "./serialize.js";
 import { Renderer } from "./render.js";
+import { Inspector } from "./inspector.js";
 
 const SEED = `# nDMindMap: Welcome
 
 ## Nodes
 
-- [root] nDMindMap {kind: root}
-- [capture] Fast idea capture {kind: pillar}
-- [graph] Graph-shaped, not a tree {kind: pillar}
-- [format] Human-readable file {kind: pillar}
-- [nd] n-dimensional nodes {kind: idea}
-- [rel] Typed relationships {kind: idea}
+- [root] nDMindMap
+- [capture] Fast capture
+- [graph] Graph-shaped
+- [format] Human-readable file
+- [nd] n-dimensional nodes
+- [rel] Typed relationships
 
 ## Edges
 
-- [root] --relates-to--> [capture]
-- [root] --relates-to--> [graph]
-- [root] --relates-to--> [format]
-- [graph] --enables--> [rel]
-- [nd] --lives-in--> [format]
+- [capture] --child-of--> [root]
+- [graph] --child-of--> [root]
+- [format] --child-of--> [root]
+- [nd] --child-of--> [graph]
+- [rel] --child-of--> [graph]
 - [rel] --lives-in--> [format]
 `;
 
+const IDLE_HINT = "Tab = child · Enter = sibling · F2 = rename · ↑↓←→ = move · Del = remove";
+
 let doc: MindMapDoc = parse(SEED);
+let renderer: Renderer;
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -41,52 +44,53 @@ const toolbar = document.createElement("div");
 toolbar.className = "ndmm-toolbar";
 toolbar.innerHTML = `
   <span class="brand">nDMindMap <span class="dot">●</span></span>
-  <button id="add">+ Node</button>
-  <button id="connect">Connect selected → next click</button>
-  <button id="export">Export .ndmm.md</button>
+  <button id="add" title="Add a root node">+ Root</button>
+  <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
+  <label class="ndmm-toggle"><input type="checkbox" id="grid"> Grid</label>
+  <button id="export">Export</button>
   <button id="import">Import</button>
   <span class="spacer"></span>
-  <span class="hint" id="status">drag nodes to arrange · click a node to select</span>
+  <span class="hint" id="status"></span>
 `;
 
+const body = document.createElement("div");
+body.className = "ndmm-body";
 const stage = document.createElement("div");
 stage.className = "ndmm-stage";
+body.append(stage);
+app.append(toolbar, body);
 
-app.append(toolbar, stage);
-
-let selected: GraphNode | null = null;
 const status = toolbar.querySelector<HTMLSpanElement>("#status")!;
+status.textContent = IDLE_HINT;
 
-let renderer = new Renderer(stage, doc.graph, {
-  onSelect: (n) => {
-    selected = n;
-    status.textContent = n ? `selected: ${n.label} [${n.id}]` : "drag nodes to arrange · click a node to select";
-  },
-});
+const inspector = new Inspector(body, { onEdit: () => renderer.relayout() });
+
+function mount(graph: Graph): Renderer {
+  return new Renderer(stage, graph, {
+    onSelect: (n) => {
+      status.textContent = n
+        ? `${n.label || "(unnamed)"} — Tab child · Enter sibling · F2 rename`
+        : IDLE_HINT;
+      inspector.show(n);
+    },
+    onChange: () => { /* Phase 1: hook for dirty-tracking / autosave later */ },
+  });
+}
+
+renderer = mount(doc.graph);
+renderer.focusCanvas();
+
+// --- toolbar --------------------------------------------------------------
 
 toolbar.querySelector("#add")!.addEventListener("click", () => {
-  const label = prompt("New idea:");
-  if (!label) return;
-  const n = doc.graph.addNode({ label });
-  if (selected) doc.graph.addEdge({ source: selected.id, target: n.id, relation: "relates-to" });
-  status.textContent = `added: ${n.label}`;
+  renderer.focusCanvas();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
 });
 
-// "Connect" is a two-step gesture: press the button with a node selected, then
-// click the target node.
-let connectFrom: string | null = null;
-toolbar.querySelector("#connect")!.addEventListener("click", () => {
-  if (!selected) { status.textContent = "select a source node first"; return; }
-  connectFrom = selected.id;
-  status.textContent = `connecting from ${selected.label} — click a target node`;
-});
-stage.addEventListener("pointerup", () => {
-  if (connectFrom && selected && selected.id !== connectFrom) {
-    const relation = prompt("Relationship:", "relates-to") || "relates-to";
-    doc.graph.addEdge({ source: connectFrom, target: selected.id, relation });
-    status.textContent = `linked ${connectFrom} --${relation}--> ${selected.id}`;
-    connectFrom = null;
-  }
+toolbar.querySelector("#tidy")!.addEventListener("click", () => renderer.tidy());
+
+toolbar.querySelector<HTMLInputElement>("#grid")!.addEventListener("change", (e) => {
+  renderer.setGrid((e.target as HTMLInputElement).checked);
 });
 
 toolbar.querySelector("#export")!.addEventListener("click", () => {
@@ -108,18 +112,19 @@ toolbar.querySelector("#import")!.addEventListener("click", () => {
     const file = input.files?.[0];
     if (!file) return;
     doc = parse(await file.text());
-    renderer.stop();
-    stage.replaceChildren();
-    renderer = new Renderer(stage, doc.graph, {
-      onSelect: (n) => { selected = n; },
-    });
+    renderer.destroy();
+    renderer = mount(doc.graph);
+    inspector.show(null);
+    renderer.focusCanvas();
     status.textContent = `imported: ${doc.title}`;
   });
   input.click();
 });
 
-// Expose internals for quick console poking / tests (mirrors RiffRaft's window.__mic).
-(window as unknown as { __ndmm: { doc: () => MindMapDoc; Graph: typeof Graph } }).__ndmm = {
+// Expose internals for console poking / tests (mirrors RiffRaft's window.__mic).
+(window as unknown as { __ndmm: unknown }).__ndmm = {
   doc: () => doc,
+  stringify: () => stringify(doc),
+  renderer: () => renderer,
   Graph,
 };

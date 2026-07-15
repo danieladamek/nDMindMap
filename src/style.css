@@ -1,14 +1,17 @@
 :root {
   --bg: #14161b;
   --panel: #1c2029;
-  --edge: #4a5162;
-  --edge-label: #7c8496;
+  --edge: #556074;
+  --crosslink: #7a6bd6;
+  --edge-label: #8a91a0;
   --text: #e6e9ef;
   --muted: #99a1b3;
   --accent: #6aa9ff;
   --node: #232936;
   --node-stroke: #3a4560;
   --node-selected: #6aa9ff;
+  --pin: #ffb86b;
+  --gridline: #2a3140;
   color-scheme: dark light;
 }
 
@@ -16,7 +19,8 @@
   :root {
     --bg: #f6f7f9;
     --panel: #ffffff;
-    --edge: #c3c9d4;
+    --edge: #b4bccb;
+    --crosslink: #8a7be0;
     --edge-label: #8a91a0;
     --text: #1a1d24;
     --muted: #626a7a;
@@ -24,15 +28,14 @@
     --node: #ffffff;
     --node-stroke: #c3c9d4;
     --node-selected: #2f6fe0;
+    --pin: #d98a2b;
+    --gridline: #e7ebf1;
   }
 }
 
 * { box-sizing: border-box; }
 
-html, body, #app {
-  height: 100%;
-  margin: 0;
-}
+html, body, #app { height: 100%; margin: 0; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -40,11 +43,9 @@ body {
   color: var(--text);
 }
 
-#app {
-  display: grid;
-  grid-template-rows: auto 1fr;
-}
+#app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
 
+/* Toolbar */
 .ndmm-toolbar {
   display: flex;
   align-items: center;
@@ -52,57 +53,99 @@ body {
   padding: 10px 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--node-stroke);
+  flex-wrap: wrap;
 }
-
-.ndmm-toolbar .brand {
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  margin-right: 10px;
-}
+.ndmm-toolbar .brand { font-weight: 700; letter-spacing: -0.01em; margin-right: 10px; }
 .ndmm-toolbar .brand .dot { color: var(--accent); }
 .ndmm-toolbar .spacer { flex: 1; }
 .ndmm-toolbar .hint { color: var(--muted); font-size: 12px; }
-
 .ndmm-toolbar button {
-  font: inherit;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--node);
-  border: 1px solid var(--node-stroke);
-  border-radius: 7px;
-  padding: 6px 11px;
-  cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--text);
+  background: var(--node); border: 1px solid var(--node-stroke);
+  border-radius: 7px; padding: 6px 11px; cursor: pointer;
 }
 .ndmm-toolbar button:hover { border-color: var(--accent); }
+.ndmm-toggle { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 
-.ndmm-stage { position: relative; overflow: hidden; }
+/* Body: stage + inspector */
+.ndmm-body { display: grid; grid-template-columns: 1fr auto; min-height: 0; }
 
-.ndmm-canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-  touch-action: none;
+/* Stage + canvas */
+.ndmm-stage { position: relative; overflow: auto; outline: none; }
+.ndmm-canvas { display: block; outline: none; }
+
+.ndmm-gridline { stroke: var(--gridline); stroke-width: 1; }
+
+/* Edges */
+.ndmm-edge { stroke: var(--edge); stroke-width: 1.6; fill: none; }
+.ndmm-crosslink { stroke: var(--crosslink); stroke-width: 1.4; stroke-dasharray: 4 3; opacity: 0.85; }
+.ndmm-edge-label { fill: var(--edge-label); font-size: 10px; text-anchor: middle; user-select: none; }
+
+/* Nodes */
+.ndmm-node rect {
+  fill: var(--node); stroke: var(--node-stroke); stroke-width: 1.5; cursor: grab;
 }
-
-.ndmm-edge { stroke: var(--edge); stroke-width: 1.5; }
-.ndmm-edge-label {
-  fill: var(--edge-label);
-  font-size: 10px;
-  text-anchor: middle;
-  user-select: none;
-}
-
-.ndmm-node circle {
-  fill: var(--node);
-  stroke: var(--node-stroke);
-  stroke-width: 2;
-  cursor: grab;
-}
-.ndmm-node.is-selected circle { stroke: var(--node-selected); stroke-width: 3; }
+.ndmm-node.is-selected rect { stroke: var(--node-selected); stroke-width: 2.5; }
+.ndmm-node.is-pinned rect { stroke-dasharray: 2 2; }
 .ndmm-node-label {
-  fill: var(--text);
-  font-size: 12px;
-  text-anchor: middle;
-  user-select: none;
-  pointer-events: none;
+  fill: var(--text); font-size: 13px; text-anchor: middle; dominant-baseline: central;
+  user-select: none; pointer-events: none;
+}
+.ndmm-node-type {
+  fill: var(--muted); font-size: 9px; text-anchor: middle; letter-spacing: 0.04em;
+  text-transform: uppercase; user-select: none; pointer-events: none;
+}
+
+/* Inspector */
+.ndmm-inspector {
+  width: 260px; border-left: 1px solid var(--node-stroke);
+  background: var(--panel); padding: 14px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 13px;
+}
+.insp-empty { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; }
+.insp-field { display: flex; flex-direction: column; gap: 5px; }
+.insp-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.insp-input {
+  font: inherit; font-size: 13px; color: var(--text); background: var(--node);
+  border: 1px solid var(--node-stroke); border-radius: 6px; padding: 6px 8px; width: 100%;
+}
+.insp-input:focus { outline: none; border-color: var(--accent); }
+
+.insp-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.insp-swatch {
+  width: 26px; height: 26px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--node-stroke); color: var(--muted); font-size: 13px; line-height: 1;
+}
+.insp-swatch.is-active { box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent); }
+
+.insp-segment { display: inline-flex; border: 1px solid var(--node-stroke); border-radius: 6px; overflow: hidden; }
+.insp-seg-btn {
+  font: inherit; font-size: 12px; color: var(--text); background: var(--node);
+  border: none; padding: 6px 12px; cursor: pointer; border-right: 1px solid var(--node-stroke);
+}
+.insp-seg-btn:last-child { border-right: none; }
+.insp-seg-btn.is-active { background: var(--accent); color: #fff; }
+
+.insp-attrs { display: flex; flex-direction: column; gap: 6px; }
+.insp-attr-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 5px; align-items: center; }
+.insp-attr-row .insp-input { padding: 5px 7px; font-size: 12px; }
+.insp-del {
+  font: inherit; background: transparent; border: none; color: var(--muted);
+  cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px;
+}
+.insp-del:hover { color: var(--pin); }
+.insp-add {
+  font: inherit; font-size: 12px; color: var(--accent); background: transparent;
+  border: 1px dashed var(--node-stroke); border-radius: 6px; padding: 6px; cursor: pointer; margin-top: 4px;
+}
+.insp-add:hover { border-color: var(--accent); }
+.insp-id { font-size: 10px; color: var(--muted); font-family: ui-monospace, monospace; margin-top: 4px; }
+
+/* Inline editor */
+.ndmm-edit {
+  position: absolute; z-index: 10;
+  font: 13px -apple-system, system-ui, sans-serif;
+  color: var(--text); background: var(--node);
+  border: 2px solid var(--node-selected); border-radius: 8px;
+  padding: 0 12px; outline: none;
 }

@@ -33,6 +33,9 @@ export interface GraphEdge {
   attrs: Record<string, Scalar>;
 }
 
+/** The default relationship: an edge `[child] --child-of--> [parent]`. */
+export const CHILD_OF = "child-of";
+
 let counter = 0;
 /** Small, dependency-free id generator. Stable within a session. */
 export function newId(prefix = "n"): string {
@@ -44,9 +47,20 @@ export class Graph {
   readonly nodes = new Map<string, GraphNode>();
   readonly edges = new Map<string, GraphEdge>();
 
+  /** Generate an id not already present in `existing`. Guards against the
+   *  monotonic `newId` counter colliding with ids loaded from a file (e.g. a
+   *  generated "nd" clobbering a user's node whose id is literally "nd"). An
+   *  explicitly-supplied id is trusted as-is. */
+  private freshId(explicit: string | undefined, prefix: string, existing: Map<string, unknown>): string {
+    if (explicit !== undefined) return explicit;
+    let id = newId(prefix);
+    while (existing.has(id)) id = newId(prefix);
+    return id;
+  }
+
   addNode(node: Partial<GraphNode> & { label: string }): GraphNode {
     const n: GraphNode = {
-      id: node.id ?? newId("n"),
+      id: this.freshId(node.id, "n", this.nodes),
       label: node.label,
       attrs: node.attrs ?? {},
       x: node.x,
@@ -60,7 +74,7 @@ export class Graph {
     if (!this.nodes.has(edge.source)) throw new Error(`unknown source node: ${edge.source}`);
     if (!this.nodes.has(edge.target)) throw new Error(`unknown target node: ${edge.target}`);
     const e: GraphEdge = {
-      id: edge.id ?? newId("e"),
+      id: this.freshId(edge.id, "e", this.edges),
       source: edge.source,
       target: edge.target,
       relation: edge.relation ?? "relates-to",
@@ -105,5 +119,68 @@ export class Graph {
   /** Find nodes whose attribute `key` equals `value`. A tiny query primitive. */
   where(key: string, value: Scalar): GraphNode[] {
     return [...this.nodes.values()].filter((n) => n.attrs[key] === value);
+  }
+
+  // --- Tree view over the `child-of` relation -------------------------------
+  // The mind-map spine. `child-of` edges point child → parent, so a node's
+  // parent is the target of its outgoing child-of edge, and its children are the
+  // sources of incoming child-of edges.
+
+  /** The parent node in the child-of tree, or null for a root. */
+  parentOf(id: string): GraphNode | null {
+    for (const e of this.edges.values()) {
+      if (e.relation === CHILD_OF && e.source === id) return this.nodes.get(e.target) ?? null;
+    }
+    return null;
+  }
+
+  /** Direct children in the child-of tree (insertion order). */
+  childrenOf(id: string): GraphNode[] {
+    const out: GraphNode[] = [];
+    for (const e of this.edges.values()) {
+      if (e.relation === CHILD_OF && e.target === id) {
+        const n = this.nodes.get(e.source);
+        if (n) out.push(n);
+      }
+    }
+    return out;
+  }
+
+  /** Nodes with no parent — the roots of the child-of forest. */
+  roots(): GraphNode[] {
+    return [...this.nodes.values()].filter((n) => this.parentOf(n.id) === null);
+  }
+
+  /** Attach `childId` under `parentId` via a child-of edge, moving it if it
+   *  already had a parent. Returns the edge. Guards against cycles. */
+  setParent(childId: string, parentId: string): GraphEdge {
+    if (childId === parentId) throw new Error("a node cannot be its own parent");
+    if (this.isDescendant(parentId, childId)) throw new Error("that move would create a cycle");
+    for (const [eid, e] of this.edges) {
+      if (e.relation === CHILD_OF && e.source === childId) this.edges.delete(eid);
+    }
+    return this.addEdge({ source: childId, target: parentId, relation: CHILD_OF });
+  }
+
+  /** Is `maybeDescendant` inside the subtree rooted at `ancestorId`? */
+  isDescendant(maybeDescendant: string, ancestorId: string): boolean {
+    let cur = this.parentOf(maybeDescendant);
+    while (cur) {
+      if (cur.id === ancestorId) return true;
+      cur = this.parentOf(cur.id);
+    }
+    return false;
+  }
+
+  /** Remove a node and its entire child-of subtree. Returns removed ids. */
+  removeSubtree(id: string): string[] {
+    const removed: string[] = [];
+    const walk = (nid: string) => {
+      for (const c of this.childrenOf(nid)) walk(c.id);
+      removed.push(nid);
+      this.removeNode(nid);
+    };
+    walk(id);
+    return removed;
   }
 }

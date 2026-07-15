@@ -1,245 +1,444 @@
 /**
- * Minimal dependency-free SVG renderer + force layout for nDMindMap.
+ * nDMindMap renderer — Phase 1: a keyboard-first, left-to-right mind map.
  *
- * This is deliberately small — a solid, hackable starting point rather than a
- * full graph-viz engine. It:
- *   - runs a lightweight spring/repulsion simulation to place nodes,
- *   - draws labeled edges (the relation is the label),
- *   - lets you drag nodes (pinning them, which writes back x/y),
- *   - reports selection so the app shell can act on it.
+ * Responsibilities:
+ *   - lay out the `child-of` tree (via layout.ts) and draw it as pill nodes with
+ *     smooth parent→child connectors; draw non-`child-of` edges as dashed
+ *     cross-links (the beginnings of the "nD" overlay),
+ *   - own selection + the keyboard capture loop (tab = child, enter = sibling,
+ *     arrows = navigate, F2 = rename, delete = remove subtree),
+ *   - inline-edit labels with a floating <input>,
+ *   - let a node be dragged to pin it (free placement, snap-to-grid optional).
+ *
+ * The renderer mutates the graph directly and calls `onChange` after any edit so
+ * the shell can persist / mark dirty. No animation loop — layout is static and
+ * recomputed on demand (mind maps don't need a physics sim).
  */
 
 import type { Graph, GraphNode } from "./model.js";
+import { CHILD_OF } from "./model.js";
+import { layoutTree, isPinned } from "./layout.js";
+import { nodeShape, nodeColor, nodeScale, nodeType, contrastText, type Shape } from "./visuals.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-
-interface Sim {
-  vx: Map<string, number>;
-  vy: Map<string, number>;
-}
+const NODE_H = 34;
+const PAD_X = 14;
+const MIN_W = 54;
 
 export interface RendererOptions {
   onSelect?: (node: GraphNode | null) => void;
+  onChange?: () => void;
+  gridSize?: number;
 }
 
 export class Renderer {
   private svg: SVGSVGElement;
+  private gridRect: SVGRectElement;
   private edgeLayer: SVGGElement;
   private nodeLayer: SVGGElement;
-  private sim: Sim = { vx: new Map(), vy: new Map() };
-  private dragging: string | null = null;
-  private raf = 0;
-  private selected: string | null = null;
-  private observer: ResizeObserver | null = null;
+  private editor: HTMLInputElement;
+
+  private selectedId: string | null = null;
+  private editing = false;
+  private editingIsNew = false;
+  private grid = false;
+  private gridSize: number;
+
+  private measureCtx = document.createElement("canvas").getContext("2d")!;
 
   constructor(private host: HTMLElement, private graph: Graph, private opts: RendererOptions = {}) {
+    this.gridSize = opts.gridSize ?? 20;
+
     this.svg = document.createElementNS(SVG_NS, "svg");
     this.svg.setAttribute("class", "ndmm-canvas");
+    this.svg.setAttribute("tabindex", "-1");
+    this.svg.innerHTML = `<defs><pattern id="ndmm-grid" width="${this.gridSize}" height="${this.gridSize}" patternUnits="userSpaceOnUse"><path d="M ${this.gridSize} 0 L 0 0 0 ${this.gridSize}" fill="none" class="ndmm-gridline"/></pattern></defs>`;
+    this.gridRect = document.createElementNS(SVG_NS, "rect");
+    this.gridRect.setAttribute("class", "ndmm-gridbg");
+    this.gridRect.setAttribute("x", "0");
+    this.gridRect.setAttribute("y", "0");
+    this.gridRect.setAttribute("width", "100%");
+    this.gridRect.setAttribute("height", "100%");
+    this.gridRect.setAttribute("fill", "url(#ndmm-grid)");
+    this.gridRect.style.display = "none";
     this.edgeLayer = document.createElementNS(SVG_NS, "g");
     this.nodeLayer = document.createElementNS(SVG_NS, "g");
-    this.svg.append(this.edgeLayer, this.nodeLayer);
+    this.svg.append(this.gridRect, this.edgeLayer, this.nodeLayer);
     host.append(this.svg);
 
-    this.bindDrag();
-    this.svg.addEventListener("pointerdown", (e) => {
-      if (e.target === this.svg) this.select(null);
-    });
+    // The stage div owns keyboard focus (a focusable div is universally reliable
+    // for key events — more so than a focused <svg>). Keys bubble here whether the
+    // svg or the div itself is focused.
+    host.setAttribute("tabindex", "-1");
 
-    // Lay out once the stage actually has its size. At construction the CSS grid
-    // hasn't resolved the stage height yet (it measures 0), so seeding/centring
-    // now would frame the map around the wrong centre. A ResizeObserver fires
-    // when the real size lands — and again if the window resizes.
-    this.observer = new ResizeObserver(() => this.onResize());
-    this.observer.observe(host);
+    this.editor = document.createElement("input");
+    this.editor.className = "ndmm-edit";
+    this.editor.style.display = "none";
+    host.append(this.editor);
+    this.bindEditor();
 
-    this.start();
+    this.bindPointer();
+    this.bindKeys();
+
+    // First layout once the stage has a real size (CSS grid resolves late).
+    const ro = new ResizeObserver(() => this.relayout());
+    ro.observe(host);
+    this.relayout();
   }
 
-  private laidOut = false;
+  // --- measurement ----------------------------------------------------------
 
-  private onResize(): void {
-    const { width, height } = this.size();
-    if (width < 10 || height < 10) return; // not really sized yet
-    if (!this.laidOut) {
-      this.seedPositions();
-      this.warmUp();
-      this.laidOut = true;
-    } else {
-      // Window resized after the initial layout — let gravity re-centre without
-      // discarding the user's arrangement.
-      this.warmUp(80);
+  private nodeWidth(n: GraphNode): number {
+    const scale = nodeScale(n);
+    this.measureCtx.font = `${13 * scale}px -apple-system, system-ui, sans-serif`;
+    const w = this.measureCtx.measureText(n.label || "…").width;
+    const base = Math.max(MIN_W * scale, Math.ceil(w) + PAD_X * 2 * scale);
+    // Round shapes need extra width to keep the label inside the outline.
+    const shape = nodeShape(n);
+    return shape === "diamond" ? base * 1.5 : shape === "ellipse" ? base * 1.3 : base;
+  }
+
+  private nodeHeight(n: GraphNode): number {
+    const h = NODE_H * nodeScale(n);
+    return nodeShape(n) === "diamond" ? h * 1.4 : h;
+  }
+
+  /** Build the outline element for a shape, positioned with (x, y) = left-edge /
+   *  vertical-center of the bounding box. */
+  private makeShape(shape: Shape, x: number, y: number, w: number, h: number): SVGElement {
+    const cx = x + w / 2;
+    if (shape === "ellipse") {
+      const el = document.createElementNS(SVG_NS, "ellipse");
+      el.setAttribute("cx", String(cx));
+      el.setAttribute("cy", String(y));
+      el.setAttribute("rx", String(w / 2));
+      el.setAttribute("ry", String(h / 2));
+      return el;
     }
-  }
-
-  /** Give every unplaced node a starting spot near the centre. */
-  private seedPositions(): void {
-    const { width, height } = this.size();
-    let i = 0;
-    for (const n of this.graph.nodes.values()) {
-      if (n.x === undefined || n.y === undefined) {
-        const angle = i * 2.399963; // golden angle — avoids overlap
-        const r = 40 + 12 * Math.sqrt(i);
-        n.x = width / 2 + r * Math.cos(angle);
-        n.y = height / 2 + r * Math.sin(angle);
-      }
-      this.sim.vx.set(n.id, 0);
-      this.sim.vy.set(n.id, 0);
-      i += 1;
+    if (shape === "diamond") {
+      const el = document.createElementNS(SVG_NS, "polygon");
+      el.setAttribute("points", `${x},${y} ${cx},${y - h / 2} ${x + w},${y} ${cx},${y + h / 2}`);
+      return el;
     }
+    const rect = document.createElementNS(SVG_NS, "rect");
+    rect.setAttribute("x", String(x));
+    rect.setAttribute("y", String(y - h / 2));
+    rect.setAttribute("width", String(w));
+    rect.setAttribute("height", String(h));
+    rect.setAttribute("rx", shape === "rect" ? "0" : shape === "pill" ? String(h / 2) : "8");
+    return rect;
   }
 
-  /**
-   * Run the simulation to rest synchronously before the first paint, so the map
-   * loads already framed and centred instead of animating out from a clump.
-   * (requestAnimationFrame then only drives interaction, and is free to be
-   * throttled when the tab is backgrounded.)
-   */
-  private warmUp(iterations = 400): void {
-    for (let i = 0; i < iterations; i++) this.step();
-  }
+  // --- layout + draw --------------------------------------------------------
 
-  private size(): { width: number; height: number } {
+  /** Recompute tree positions and redraw. */
+  relayout(): void {
+    const bounds = layoutTree(this.graph);
     const rect = this.host.getBoundingClientRect();
-    return { width: rect.width || 800, height: rect.height || 600 };
-  }
-
-  private start(): void {
-    const tick = () => {
-      this.step();
-      this.draw();
-      this.raf = requestAnimationFrame(tick);
-    };
-    this.raf = requestAnimationFrame(tick);
-  }
-
-  stop(): void {
-    cancelAnimationFrame(this.raf);
-    this.observer?.disconnect();
-    this.observer = null;
-  }
-
-  /** One iteration of a crude force-directed layout. */
-  private step(): void {
-    const nodes = [...this.graph.nodes.values()];
-    const { width, height } = this.size();
-    const REPULSE = 9000;
-    const SPRING = 0.02;
-    const REST = 130;
-    const DAMP = 0.85;
-    const GRAVITY = 0.9; // gentle pull toward centre so the map stays framed
-    const cx = width / 2;
-    const cy = height / 2;
-
-    // Pairwise repulsion.
-    for (let i = 0; i < nodes.length; i++) {
-      const a = nodes[i];
-      for (let j = i + 1; j < nodes.length; j++) {
-        const b = nodes[j];
-        let dx = (a.x ?? 0) - (b.x ?? 0);
-        let dy = (a.y ?? 0) - (b.y ?? 0);
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 0.01) { dx = Math.random(); dy = Math.random(); d2 = dx * dx + dy * dy; }
-        const f = REPULSE / d2;
-        const d = Math.sqrt(d2);
-        const fx = (dx / d) * f;
-        const fy = (dy / d) * f;
-        this.sim.vx.set(a.id, (this.sim.vx.get(a.id) ?? 0) + fx);
-        this.sim.vy.set(a.id, (this.sim.vy.get(a.id) ?? 0) + fy);
-        this.sim.vx.set(b.id, (this.sim.vx.get(b.id) ?? 0) - fx);
-        this.sim.vy.set(b.id, (this.sim.vy.get(b.id) ?? 0) - fy);
-      }
-    }
-
-    // Edge springs.
-    for (const e of this.graph.edges.values()) {
-      const a = this.graph.nodes.get(e.source);
-      const b = this.graph.nodes.get(e.target);
-      if (!a || !b) continue;
-      const dx = (b.x ?? 0) - (a.x ?? 0);
-      const dy = (b.y ?? 0) - (a.y ?? 0);
-      const d = Math.hypot(dx, dy) || 1;
-      const f = (d - REST) * SPRING;
-      const fx = (dx / d) * f;
-      const fy = (dy / d) * f;
-      this.sim.vx.set(a.id, (this.sim.vx.get(a.id) ?? 0) + fx);
-      this.sim.vy.set(a.id, (this.sim.vy.get(a.id) ?? 0) + fy);
-      this.sim.vx.set(b.id, (this.sim.vx.get(b.id) ?? 0) - fx);
-      this.sim.vy.set(b.id, (this.sim.vy.get(b.id) ?? 0) - fy);
-    }
-
-    // Centring gravity — pulls each node gently toward the middle.
-    for (const n of nodes) {
-      this.sim.vx.set(n.id, (this.sim.vx.get(n.id) ?? 0) + (cx - (n.x ?? 0)) * GRAVITY * 0.02);
-      this.sim.vy.set(n.id, (this.sim.vy.get(n.id) ?? 0) + (cy - (n.y ?? 0)) * GRAVITY * 0.02);
-    }
-
-    // Integrate.
-    for (const n of nodes) {
-      if (n.id === this.dragging) { this.sim.vx.set(n.id, 0); this.sim.vy.set(n.id, 0); continue; }
-      const vx = (this.sim.vx.get(n.id) ?? 0) * DAMP;
-      const vy = (this.sim.vy.get(n.id) ?? 0) * DAMP;
-      n.x = Math.max(30, Math.min(width - 30, (n.x ?? 0) + vx * 0.02));
-      n.y = Math.max(30, Math.min(height - 30, (n.y ?? 0) + vy * 0.02));
-      this.sim.vx.set(n.id, vx);
-      this.sim.vy.set(n.id, vy);
-    }
+    const w = Math.max(bounds.width, rect.width || 0);
+    const h = Math.max(bounds.height, rect.height || 0);
+    this.svg.setAttribute("width", String(w));
+    this.svg.setAttribute("height", String(h));
+    this.svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    this.draw();
   }
 
   private draw(): void {
-    // Edges.
     this.edgeLayer.replaceChildren();
+    this.nodeLayer.replaceChildren();
+
+    // Edges: child-of as smooth connectors, others as dashed cross-links.
     for (const e of this.graph.edges.values()) {
       const a = this.graph.nodes.get(e.source);
       const b = this.graph.nodes.get(e.target);
       if (!a || !b) continue;
-      const line = document.createElementNS(SVG_NS, "line");
-      line.setAttribute("x1", String(a.x));
-      line.setAttribute("y1", String(a.y));
-      line.setAttribute("x2", String(b.x));
-      line.setAttribute("y2", String(b.y));
-      line.setAttribute("class", "ndmm-edge");
-      this.edgeLayer.append(line);
 
-      const label = document.createElementNS(SVG_NS, "text");
-      label.setAttribute("x", String(((a.x ?? 0) + (b.x ?? 0)) / 2));
-      label.setAttribute("y", String(((a.y ?? 0) + (b.y ?? 0)) / 2 - 4));
-      label.setAttribute("class", "ndmm-edge-label");
-      label.textContent = e.relation;
-      this.edgeLayer.append(label);
+      if (e.relation === CHILD_OF) {
+        // parent (b) right edge → child (a) left edge
+        const px = (b.x ?? 0) + this.nodeWidth(b);
+        const py = b.y ?? 0;
+        const cx = a.x ?? 0;
+        const cy = a.y ?? 0;
+        const mid = (px + cx) / 2;
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("d", `M ${px} ${py} C ${mid} ${py}, ${mid} ${cy}, ${cx} ${cy}`);
+        path.setAttribute("class", "ndmm-edge");
+        this.edgeLayer.append(path);
+      } else {
+        const ax = (a.x ?? 0) + this.nodeWidth(a) / 2;
+        const bx = (b.x ?? 0) + this.nodeWidth(b) / 2;
+        const line = document.createElementNS(SVG_NS, "line");
+        line.setAttribute("x1", String(ax));
+        line.setAttribute("y1", String(a.y));
+        line.setAttribute("x2", String(bx));
+        line.setAttribute("y2", String(b.y));
+        line.setAttribute("class", "ndmm-crosslink");
+        this.edgeLayer.append(line);
+
+        const label = document.createElementNS(SVG_NS, "text");
+        label.setAttribute("x", String((ax + bx) / 2));
+        label.setAttribute("y", String(((a.y ?? 0) + (b.y ?? 0)) / 2 - 4));
+        label.setAttribute("class", "ndmm-edge-label");
+        label.textContent = e.relation;
+        this.edgeLayer.append(label);
+      }
     }
 
     // Nodes.
-    this.nodeLayer.replaceChildren();
     for (const n of this.graph.nodes.values()) {
+      const w = this.nodeWidth(n);
+      const h = this.nodeHeight(n);
+      const x = n.x ?? 0;
+      const y = n.y ?? 0;
+      const scale = nodeScale(n);
+      const color = nodeColor(n);
+
       const g = document.createElementNS(SVG_NS, "g");
-      g.setAttribute("class", "ndmm-node" + (n.id === this.selected ? " is-selected" : ""));
-      g.setAttribute("transform", `translate(${n.x},${n.y})`);
+      g.setAttribute("class", "ndmm-node" + (n.id === this.selectedId ? " is-selected" : "") + (isPinned(n) ? " is-pinned" : ""));
       g.dataset.id = n.id;
 
-      const circle = document.createElementNS(SVG_NS, "circle");
-      circle.setAttribute("r", "22");
-      g.append(circle);
+      const shape = this.makeShape(nodeShape(n), x, y, w, h);
+      if (color) {
+        shape.style.fill = color;
+        shape.style.stroke = color;
+      }
+      g.append(shape);
+
+      // Type tag above the node (a first taste of node typing).
+      const t = nodeType(n);
+      if (t) {
+        const tag = document.createElementNS(SVG_NS, "text");
+        tag.setAttribute("x", String(x + w / 2));
+        tag.setAttribute("y", String(y - h / 2 - 5));
+        tag.setAttribute("class", "ndmm-node-type");
+        tag.textContent = t;
+        g.append(tag);
+      }
 
       const text = document.createElementNS(SVG_NS, "text");
+      text.setAttribute("x", String(x + w / 2));
+      text.setAttribute("y", String(y));
       text.setAttribute("class", "ndmm-node-label");
-      text.setAttribute("dy", "38");
-      text.textContent = n.label;
+      text.style.fontSize = `${13 * scale}px`;
+      if (color) text.style.fill = contrastText(color);
+      text.textContent = n.label || "…";
       g.append(text);
 
       this.nodeLayer.append(g);
     }
   }
 
-  private bindDrag(): void {
+  // --- selection ------------------------------------------------------------
+
+  private select(id: string | null): void {
+    this.selectedId = id;
+    this.opts.onSelect?.(id ? this.graph.nodes.get(id) ?? null : null);
+    this.draw();
+  }
+
+  get selected(): GraphNode | null {
+    return this.selectedId ? this.graph.nodes.get(this.selectedId) ?? null : null;
+  }
+
+  // --- capture operations ---------------------------------------------------
+
+  private addChild(parentId: string): GraphNode {
+    const child = this.graph.addNode({ label: "" });
+    this.graph.setParent(child.id, parentId);
+    this.changed();
+    this.relayout();
+    this.select(child.id);
+    this.startEdit(child.id, true);
+    return child;
+  }
+
+  private addSibling(nodeId: string): GraphNode {
+    const parent = this.graph.parentOf(nodeId);
+    if (parent) return this.addChild(parent.id);
+    // A root's sibling is another root (no child-of edge).
+    const root = this.graph.addNode({ label: "" });
+    this.changed();
+    this.relayout();
+    this.select(root.id);
+    this.startEdit(root.id, true);
+    return root;
+  }
+
+  private deleteSelected(): void {
+    if (!this.selectedId) return;
+    const parent = this.graph.parentOf(this.selectedId);
+    const siblings = parent ? this.graph.childrenOf(parent.id) : this.graph.roots();
+    const idx = siblings.findIndex((s) => s.id === this.selectedId);
+    this.graph.removeSubtree(this.selectedId);
+    this.changed();
+    const next = parent ?? siblings[idx + 1] ?? siblings[idx - 1] ?? this.graph.roots()[0] ?? null;
+    this.relayout();
+    this.select(next ? next.id : null);
+  }
+
+  private changed(): void {
+    this.opts.onChange?.();
+  }
+
+  // --- inline editor --------------------------------------------------------
+
+  private startEdit(id: string, isNew = false): void {
+    const n = this.graph.nodes.get(id);
+    if (!n) return;
+    this.editing = true;
+    this.editingIsNew = isNew;
+    this.selectedId = id;
+
+    const w = Math.max(this.nodeWidth(n), 90);
+    this.editor.style.display = "block";
+    this.editor.style.left = `${n.x ?? 0}px`;
+    this.editor.style.top = `${(n.y ?? 0) - NODE_H / 2 - this.host.scrollTop}px`;
+    this.editor.style.width = `${w}px`;
+    this.editor.style.height = `${NODE_H}px`;
+    this.editor.value = n.label;
+    this.editor.focus();
+    this.editor.select();
+  }
+
+  private commitEdit(): void {
+    if (!this.editing || !this.selectedId) return;
+    const n = this.graph.nodes.get(this.selectedId);
+    if (n) {
+      n.label = this.editor.value.trim();
+      this.changed();
+    }
+    this.finishEdit();
+  }
+
+  private cancelEdit(): void {
+    if (this.editing && this.editingIsNew && this.selectedId) {
+      const n = this.graph.nodes.get(this.selectedId);
+      if (n && !n.label.trim()) {
+        const parent = this.graph.parentOf(this.selectedId);
+        this.graph.removeSubtree(this.selectedId);
+        this.selectedId = parent ? parent.id : null;
+        this.changed();
+      }
+    }
+    this.finishEdit();
+  }
+
+  private finishEdit(): void {
+    this.editing = false;
+    this.editingIsNew = false;
+    this.editor.style.display = "none";
+    this.relayout();
+    this.opts.onSelect?.(this.selected);
+    this.host.focus();
+  }
+
+  private bindEditor(): void {
+    this.editor.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const id = this.selectedId;
+        this.commitEdit();
+        if (id) this.addSibling(id);
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        const id = this.selectedId;
+        this.commitEdit();
+        if (id) this.addChild(id);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        this.cancelEdit();
+      }
+    });
+    this.editor.addEventListener("blur", () => {
+      if (this.editing) this.commitEdit();
+    });
+  }
+
+  // --- keyboard navigation / capture ---------------------------------------
+
+  private bindKeys(): void {
+    // Keys are bound to the focusable stage div, so they fire exactly when the
+    // canvas has focus — no global "active" flag to keep in sync. While the inline
+    // editor (<input>) is focused, `editing` is true and we bail (its own handler
+    // runs), so bubbling from the input never double-fires.
+    this.host.addEventListener("keydown", (e) => {
+      if (this.editing) return;
+      const sel = this.selectedId;
+      switch (e.key) {
+        case "Tab":
+          e.preventDefault();
+          if (sel) this.addChild(sel);
+          else this.createRoot();
+          break;
+        case "Enter":
+          e.preventDefault();
+          if (sel) this.addSibling(sel);
+          else this.createRoot();
+          break;
+        case "F2":
+          e.preventDefault();
+          if (sel) this.startEdit(sel);
+          break;
+        case "Delete":
+        case "Backspace":
+          e.preventDefault();
+          this.deleteSelected();
+          break;
+        case "ArrowLeft": {
+          e.preventDefault();
+          if (sel) { const p = this.graph.parentOf(sel); if (p) this.select(p.id); }
+          break;
+        }
+        case "ArrowRight": {
+          e.preventDefault();
+          if (sel) { const c = this.graph.childrenOf(sel)[0]; if (c) this.select(c.id); }
+          break;
+        }
+        case "ArrowUp":
+          e.preventDefault();
+          this.moveSibling(-1);
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          this.moveSibling(1);
+          break;
+      }
+    });
+  }
+
+  private createRoot(): void {
+    const root = this.graph.addNode({ label: "" });
+    this.changed();
+    this.relayout();
+    this.select(root.id);
+    this.startEdit(root.id, true);
+  }
+
+  private moveSibling(dir: -1 | 1): void {
+    if (!this.selectedId) { const r = this.graph.roots()[0]; if (r) this.select(r.id); return; }
+    const parent = this.graph.parentOf(this.selectedId);
+    const sibs = parent ? this.graph.childrenOf(parent.id) : this.graph.roots();
+    const i = sibs.findIndex((s) => s.id === this.selectedId);
+    const next = sibs[i + dir];
+    if (next) this.select(next.id);
+  }
+
+  // --- pointer: select, focus, drag-to-pin ---------------------------------
+
+  private bindPointer(): void {
+    let dragging: string | null = null;
+    let moved = false;
     let offX = 0;
     let offY = 0;
 
     this.svg.addEventListener("pointerdown", (e) => {
+      this.host.focus(); // stage owns the keyboard while focused
       const target = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
-      if (!target?.dataset.id) return;
+      if (!target?.dataset.id) { this.select(null); return; }
       const n = this.graph.nodes.get(target.dataset.id);
       if (!n) return;
-      this.dragging = n.id;
+      dragging = n.id;
+      moved = false;
       this.select(n.id);
       const pt = this.toLocal(e);
       offX = pt.x - (n.x ?? 0);
@@ -248,20 +447,46 @@ export class Renderer {
     });
 
     this.svg.addEventListener("pointermove", (e) => {
-      if (!this.dragging) return;
-      const n = this.graph.nodes.get(this.dragging);
+      if (!dragging) return;
+      const n = this.graph.nodes.get(dragging);
       if (!n) return;
+      moved = true;
       const pt = this.toLocal(e);
-      n.x = pt.x - offX;
-      n.y = pt.y - offY;
+      let nx = pt.x - offX;
+      let ny = pt.y - offY;
+      if (this.grid) {
+        nx = Math.round(nx / this.gridSize) * this.gridSize;
+        ny = Math.round(ny / this.gridSize) * this.gridSize;
+      }
+      n.x = nx;
+      n.y = ny;
+      n.attrs.pinned = true; // hand-placed → pinned, layout leaves it alone
+      this.draw();
     });
 
     const end = (e: PointerEvent) => {
-      if (this.dragging) this.svg.releasePointerCapture(e.pointerId);
-      this.dragging = null;
+      if (dragging) {
+        this.svg.releasePointerCapture(e.pointerId);
+        if (moved) this.changed();
+      }
+      dragging = null;
     };
     this.svg.addEventListener("pointerup", end);
     this.svg.addEventListener("pointercancel", end);
+
+    this.svg.addEventListener("dblclick", (e) => {
+      const target = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
+      if (target?.dataset.id) this.startEdit(target.dataset.id);
+    });
+
+    // Selection also on `click` — pointerdown drives drag, but not every input
+    // path (some automation / assistive tech) emits pointer events, whereas click
+    // is universal. Idempotent with the pointerdown selection above.
+    this.svg.addEventListener("click", (e) => {
+      this.host.focus();
+      const target = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
+      this.select(target?.dataset.id ?? null);
+    });
   }
 
   private toLocal(e: PointerEvent): { x: number; y: number } {
@@ -269,17 +494,26 @@ export class Renderer {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  private select(id: string | null): void {
-    this.selected = id;
-    this.opts.onSelect?.(id ? this.graph.nodes.get(id) ?? null : null);
+  // --- public controls (toolbar) -------------------------------------------
+
+  /** Re-run the tidy layout, clearing all hand-placed pins. */
+  tidy(): void {
+    for (const n of this.graph.nodes.values()) delete n.attrs.pinned;
+    this.changed();
+    this.relayout();
   }
 
-  /** Re-seed after a wholesale graph swap (e.g. import). */
-  reset(graph: Graph): void {
-    this.graph = graph;
-    this.sim = { vx: new Map(), vy: new Map() };
-    this.selected = null;
-    this.seedPositions();
-    this.warmUp();
+  setGrid(on: boolean): void {
+    this.grid = on;
+    this.gridRect.style.display = on ? "block" : "none";
+  }
+
+  focusCanvas(): void {
+    this.host.focus();
+  }
+
+  destroy(): void {
+    this.editor.remove();
+    this.svg.remove();
   }
 }
