@@ -33,7 +33,7 @@ const SEED = `# nDMindMap: Welcome
 - [rel] --lives-in--> [format]
 `;
 
-const IDLE_HINT = "Tab = child · Enter = sibling · F2 = rename · ↑↓←→ = move · Del = remove";
+const IDLE_HINT = "Tab = child · Enter = sibling · F2 = rename · L = link · ↑↓←→ = move · Del = remove";
 
 let doc: MindMapDoc = parse(SEED);
 let renderer: Renderer;
@@ -45,6 +45,7 @@ toolbar.className = "ndmm-toolbar";
 toolbar.innerHTML = `
   <span class="brand">nDMindMap <span class="dot">●</span></span>
   <button id="add" title="Add a root node">+ Root</button>
+  <button id="link" title="Link the selected node to another (typed relationship) — or press L">+ Link</button>
   <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
   <label class="ndmm-toggle"><input type="checkbox" id="grid"> Grid</label>
   <button id="export">Export</button>
@@ -69,9 +70,24 @@ function mount(graph: Graph): Renderer {
   return new Renderer(stage, graph, {
     onSelect: (n) => {
       status.textContent = n
-        ? `${n.label || "(unnamed)"} — Tab child · Enter sibling · F2 rename`
+        ? `${n.label || "(unnamed)"} — Tab child · Enter sibling · F2 rename · L link`
         : IDLE_HINT;
       inspector.show(n);
+    },
+    onSelectEdge: (edge) => {
+      if (!edge) { inspector.show(null); status.textContent = IDLE_HINT; return; }
+      const src = graph.nodes.get(edge.source);
+      const tgt = graph.nodes.get(edge.target);
+      status.textContent = `edge: ${src?.label ?? edge.source} → ${tgt?.label ?? edge.target}`;
+      inspector.showEdge(edge, {
+        relationTypes: renderer.relationTypes(),
+        sourceLabel: src?.label || edge.source,
+        targetLabel: tgt?.label || edge.target,
+        onDelete: () => renderer.deleteEdge(edge.id),
+      });
+    },
+    onLinkModeChange: (active) => {
+      if (active) status.textContent = "Link mode — click a target node (Esc to cancel)";
     },
     onChange: () => { /* Phase 1: hook for dirty-tracking / autosave later */ },
   });
@@ -85,6 +101,12 @@ renderer.focusCanvas();
 toolbar.querySelector("#add")!.addEventListener("click", () => {
   renderer.focusCanvas();
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+});
+
+toolbar.querySelector("#link")!.addEventListener("click", () => {
+  if (!renderer.selected) { status.textContent = "Select a node first, then Link (or press L)"; return; }
+  renderer.focusCanvas();
+  renderer.startLink();
 });
 
 toolbar.querySelector("#tidy")!.addEventListener("click", () => renderer.tidy());

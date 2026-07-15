@@ -79,7 +79,13 @@ body {
 /* Edges */
 .ndmm-edge { stroke: var(--edge); stroke-width: 1.6; fill: none; }
 .ndmm-crosslink { stroke: var(--crosslink); stroke-width: 1.4; stroke-dasharray: 4 3; opacity: 0.85; }
+.ndmm-crosslink-hit { stroke: transparent; stroke-width: 14; cursor: pointer; }
+.ndmm-crosslink-g.is-selected .ndmm-crosslink { stroke-width: 2.6; opacity: 1; stroke-dasharray: none; }
+.ndmm-crosslink-g.is-selected .ndmm-edge-label { fill: var(--crosslink); font-weight: 600; }
 .ndmm-edge-label { fill: var(--edge-label); font-size: 10px; text-anchor: middle; user-select: none; }
+
+/* Link mode: crosshair while choosing a target */
+.ndmm-stage.is-linking .ndmm-canvas { cursor: crosshair; }
 
 /* Nodes */
 .ndmm-node rect {
@@ -140,6 +146,21 @@ body {
 }
 .insp-add:hover { border-color: var(--accent); }
 .insp-id { font-size: 10px; color: var(--muted); font-family: ui-monospace, monospace; margin-top: 4px; }
+
+/* Edge editor */
+.insp-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.insp-chip {
+  font: inherit; font-size: 11px; color: var(--text); background: var(--node);
+  border: 1px solid var(--node-stroke); border-radius: 999px; padding: 3px 9px; cursor: pointer;
+}
+.insp-chip:hover { border-color: var(--crosslink); }
+.insp-chip.is-active { background: var(--crosslink); color: #fff; border-color: var(--crosslink); }
+.insp-conn { font-size: 13px; color: var(--text); }
+.insp-delete-edge {
+  font: inherit; font-size: 12px; color: var(--pin); background: transparent;
+  border: 1px solid var(--node-stroke); border-radius: 6px; padding: 7px; cursor: pointer; margin-top: 4px;
+}
+.insp-delete-edge:hover { border-color: var(--pin); }
 
 /* Inline editor */
 .ndmm-edit {

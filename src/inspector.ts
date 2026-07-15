@@ -8,11 +8,19 @@
  * ever touches the one node it was handed.
  */
 
-import type { GraphNode, Scalar } from "./model.js";
+import type { GraphNode, GraphEdge, Scalar } from "./model.js";
 import { SHAPES, COLORS, SIZES, customAttrs, nodeShape, nodeColor, nodeSizeKey, nodeType } from "./visuals.js";
 
 export interface InspectorOptions {
   onEdit: () => void;
+}
+
+/** Everything the edge editor needs that isn't on the edge itself. */
+export interface EdgeContext {
+  relationTypes: string[];
+  sourceLabel: string;
+  targetLabel: string;
+  onDelete: () => void;
 }
 
 /** Coerce an edited string to a Scalar, matching the file format's parsing. */
@@ -27,6 +35,8 @@ function coerce(raw: string): Scalar {
 export class Inspector {
   private el: HTMLElement;
   private node: GraphNode | null = null;
+  private edge: GraphEdge | null = null;
+  private edgeCtx: EdgeContext | null = null;
 
   constructor(host: HTMLElement, private opts: InspectorOptions) {
     this.el = document.createElement("aside");
@@ -37,8 +47,16 @@ export class Inspector {
 
   show(node: GraphNode | null): void {
     this.node = node;
+    this.edge = null;
     if (node) this.render();
     else this.renderEmpty();
+  }
+
+  showEdge(edge: GraphEdge, ctx: EdgeContext): void {
+    this.edge = edge;
+    this.edgeCtx = ctx;
+    this.node = null;
+    this.renderEdge(true);
   }
 
   private renderEmpty(): void {
@@ -51,7 +69,10 @@ export class Inspector {
 
   private edited(structural = true): void {
     this.opts.onEdit();
-    if (structural) this.render(); // reflect derived UI (e.g. re-labeled attr rows)
+    if (structural) { // reflect derived UI (e.g. re-labeled attr rows)
+      if (this.edge) this.renderEdge();
+      else if (this.node) this.render();
+    }
   }
 
   private field(label: string): HTMLElement {
@@ -145,24 +166,7 @@ export class Inspector {
     sizeField.append(seg);
 
     // Attributes (dimensions)
-    const attrsField = this.field("Attributes (dimensions)");
-    const list = document.createElement("div");
-    list.className = "insp-attrs";
-    for (const [k, v] of customAttrs(n)) {
-      list.append(this.attrRow(n, k, v));
-    }
-    const addBtn = document.createElement("button");
-    addBtn.type = "button";
-    addBtn.className = "insp-add";
-    addBtn.textContent = "+ Add attribute";
-    addBtn.addEventListener("click", () => {
-      let key = "field";
-      let i = 1;
-      while (key in n.attrs) key = `field${i++}`;
-      n.attrs[key] = "";
-      this.edited();
-    });
-    attrsField.append(list, addBtn);
+    const attrsField = this.attrsSection("Attributes (dimensions)", n.attrs, customAttrs(n));
 
     // Id (read-only)
     const idNote = document.createElement("div");
@@ -172,7 +176,86 @@ export class Inspector {
     this.el.append(labelField, typeField, shapeField, colorField, sizeField, attrsField, idNote);
   }
 
-  private attrRow(n: GraphNode, key: string, value: Scalar): HTMLElement {
+  private renderEdge(focusRelation = false): void {
+    const e = this.edge;
+    const ctx = this.edgeCtx;
+    if (!e || !ctx) return;
+    this.el.replaceChildren();
+
+    // Relation type
+    const relField = this.field("Relation");
+    const relInput = document.createElement("input");
+    relInput.className = "insp-input";
+    relInput.placeholder = "e.g. proxy-for, measured-by…";
+    relInput.value = e.relation;
+    relInput.addEventListener("input", () => {
+      e.relation = relInput.value.trim() || "relates-to";
+      this.edited(false);
+    });
+    relField.append(relInput);
+
+    // Quick-pick chips of relation types already in the map (promotion-friendly).
+    if (ctx.relationTypes.length) {
+      const chips = document.createElement("div");
+      chips.className = "insp-chips";
+      for (const t of ctx.relationTypes) {
+        const c = document.createElement("button");
+        c.type = "button";
+        c.className = "insp-chip" + (t === e.relation ? " is-active" : "");
+        c.textContent = t;
+        c.addEventListener("click", () => { e.relation = t; this.edited(); });
+        chips.append(c);
+      }
+      relField.append(chips);
+    }
+
+    // Connects (read-only)
+    const conn = this.field("Connects");
+    const connVal = document.createElement("div");
+    connVal.className = "insp-conn";
+    connVal.textContent = `${ctx.sourceLabel} → ${ctx.targetLabel}`;
+    conn.append(connVal);
+
+    // Parameters (edge attributes — parameterized edges)
+    const params = this.attrsSection("Parameters", e.attrs, Object.entries(e.attrs));
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "insp-delete-edge";
+    del.textContent = "Delete edge";
+    del.addEventListener("click", () => ctx.onDelete());
+
+    const idNote = document.createElement("div");
+    idNote.className = "insp-id";
+    idNote.textContent = `edge: ${e.id}`;
+
+    this.el.append(relField, conn, params, del, idNote);
+    if (focusRelation) { relInput.focus(); relInput.select(); }
+  }
+
+  /** Reusable attributes editor for a node or edge. `pairs` lets the caller
+   *  choose which subset to show (nodes hide reserved keys; edges show all). */
+  private attrsSection(title: string, attrs: Record<string, Scalar>, pairs: [string, Scalar][]): HTMLElement {
+    const field = this.field(title);
+    const list = document.createElement("div");
+    list.className = "insp-attrs";
+    for (const [k, v] of pairs) list.append(this.attrRow(attrs, k, v));
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "insp-add";
+    addBtn.textContent = "+ Add attribute";
+    addBtn.addEventListener("click", () => {
+      let key = "field";
+      let i = 1;
+      while (key in attrs) key = `field${i++}`;
+      attrs[key] = "";
+      this.edited();
+    });
+    field.append(list, addBtn);
+    return field;
+  }
+
+  private attrRow(attrs: Record<string, Scalar>, key: string, value: Scalar): HTMLElement {
     const row = document.createElement("div");
     row.className = "insp-attr-row";
 
@@ -182,24 +265,24 @@ export class Inspector {
     keyInput.addEventListener("change", () => {
       const nk = keyInput.value.trim();
       if (!nk || nk === key) return;
-      if (nk in n.attrs) { keyInput.value = key; return; } // avoid clobbering
-      const val = n.attrs[key];
-      delete n.attrs[key];
-      n.attrs[nk] = val;
+      if (nk in attrs) { keyInput.value = key; return; } // avoid clobbering
+      const val = attrs[key];
+      delete attrs[key];
+      attrs[nk] = val;
       this.edited();
     });
 
     const valInput = document.createElement("input");
     valInput.className = "insp-input insp-val";
     valInput.value = String(value);
-    valInput.addEventListener("input", () => { n.attrs[key] = coerce(valInput.value); this.edited(false); });
+    valInput.addEventListener("input", () => { attrs[key] = coerce(valInput.value); this.edited(false); });
 
     const del = document.createElement("button");
     del.type = "button";
     del.className = "insp-del";
     del.textContent = "×";
     del.title = "Remove attribute";
-    del.addEventListener("click", () => { delete n.attrs[key]; this.edited(); });
+    del.addEventListener("click", () => { delete attrs[key]; this.edited(); });
 
     row.append(keyInput, valInput, del);
     return row;

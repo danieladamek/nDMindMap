@@ -15,7 +15,7 @@
  * recomputed on demand (mind maps don't need a physics sim).
  */
 
-import type { Graph, GraphNode } from "./model.js";
+import type { Graph, GraphNode, GraphEdge } from "./model.js";
 import { CHILD_OF } from "./model.js";
 import { layoutTree, isPinned } from "./layout.js";
 import { nodeShape, nodeColor, nodeScale, nodeType, contrastText, type Shape } from "./visuals.js";
@@ -27,6 +27,8 @@ const MIN_W = 54;
 
 export interface RendererOptions {
   onSelect?: (node: GraphNode | null) => void;
+  onSelectEdge?: (edge: GraphEdge | null) => void;
+  onLinkModeChange?: (active: boolean) => void;
   onChange?: () => void;
   gridSize?: number;
 }
@@ -39,6 +41,8 @@ export class Renderer {
   private editor: HTMLInputElement;
 
   private selectedId: string | null = null;
+  private selectedEdgeId: string | null = null;
+  private linkingFrom: string | null = null;
   private editing = false;
   private editingIsNew = false;
   private grid = false;
@@ -167,20 +171,30 @@ export class Renderer {
       } else {
         const ax = (a.x ?? 0) + this.nodeWidth(a) / 2;
         const bx = (b.x ?? 0) + this.nodeWidth(b) / 2;
+        const mx = (ax + bx) / 2;
+        const my = ((a.y ?? 0) + (b.y ?? 0)) / 2;
+        const cg = document.createElementNS(SVG_NS, "g");
+        cg.setAttribute("class", "ndmm-crosslink-g" + (e.id === this.selectedEdgeId ? " is-selected" : ""));
+        cg.dataset.edgeId = e.id;
+
+        // Wide transparent hit line so a thin dashed edge is easy to click.
+        const hit = document.createElementNS(SVG_NS, "line");
+        for (const [k, v] of [["x1", ax], ["y1", a.y], ["x2", bx], ["y2", b.y]] as const) hit.setAttribute(k, String(v));
+        hit.setAttribute("class", "ndmm-crosslink-hit");
+        cg.append(hit);
+
         const line = document.createElementNS(SVG_NS, "line");
-        line.setAttribute("x1", String(ax));
-        line.setAttribute("y1", String(a.y));
-        line.setAttribute("x2", String(bx));
-        line.setAttribute("y2", String(b.y));
+        for (const [k, v] of [["x1", ax], ["y1", a.y], ["x2", bx], ["y2", b.y]] as const) line.setAttribute(k, String(v));
         line.setAttribute("class", "ndmm-crosslink");
-        this.edgeLayer.append(line);
+        cg.append(line);
 
         const label = document.createElementNS(SVG_NS, "text");
-        label.setAttribute("x", String((ax + bx) / 2));
-        label.setAttribute("y", String(((a.y ?? 0) + (b.y ?? 0)) / 2 - 4));
+        label.setAttribute("x", String(mx));
+        label.setAttribute("y", String(my - 4));
         label.setAttribute("class", "ndmm-edge-label");
-        label.textContent = e.relation;
-        this.edgeLayer.append(label);
+        label.textContent = e.relation || "…";
+        cg.append(label);
+        this.edgeLayer.append(cg);
       }
     }
 
@@ -232,12 +246,65 @@ export class Renderer {
 
   private select(id: string | null): void {
     this.selectedId = id;
+    this.selectedEdgeId = null;
     this.opts.onSelect?.(id ? this.graph.nodes.get(id) ?? null : null);
+    this.draw();
+  }
+
+  private selectEdge(id: string): void {
+    const e = this.graph.edges.get(id);
+    if (!e) return;
+    this.selectedEdgeId = id;
+    this.selectedId = null;
+    this.opts.onSelectEdge?.(e);
     this.draw();
   }
 
   get selected(): GraphNode | null {
     return this.selectedId ? this.graph.nodes.get(this.selectedId) ?? null : null;
+  }
+
+  // --- typed cross-links (P1.5) --------------------------------------------
+
+  /** Arm "link mode": the next node click draws a typed edge from the selected
+   *  node to it. Only meaningful with a node selected. */
+  startLink(): void {
+    if (!this.selectedId) return;
+    this.linkingFrom = this.selectedId;
+    this.host.classList.add("is-linking");
+    this.opts.onLinkModeChange?.(true);
+  }
+
+  private cancelLink(): void {
+    if (!this.linkingFrom) return;
+    this.linkingFrom = null;
+    this.host.classList.remove("is-linking");
+    this.opts.onLinkModeChange?.(false);
+  }
+
+  private completeLink(targetId: string): void {
+    const from = this.linkingFrom;
+    this.cancelLink();
+    if (!from || from === targetId) return;
+    const edge = this.graph.addEdge({ source: from, target: targetId, relation: "relates-to" });
+    this.changed();
+    this.relayout();
+    this.selectEdge(edge.id); // opens the edge editor to name the relation
+  }
+
+  /** Remove an edge (used by the edge editor's Delete). */
+  deleteEdge(id: string): void {
+    this.graph.removeEdge(id);
+    this.changed();
+    this.relayout();
+    this.select(null);
+  }
+
+  /** Distinct relation types already in use, for the type picker. */
+  relationTypes(): string[] {
+    const set = new Set<string>();
+    for (const e of this.graph.edges.values()) if (e.relation !== CHILD_OF) set.add(e.relation);
+    return [...set].sort();
   }
 
   // --- capture operations ---------------------------------------------------
@@ -375,6 +442,14 @@ export class Renderer {
           if (sel) this.addSibling(sel);
           else this.createRoot();
           break;
+        case "l":
+        case "L":
+          if (sel) { e.preventDefault(); this.startLink(); }
+          break;
+        case "Escape":
+          if (this.linkingFrom) { e.preventDefault(); this.cancelLink(); }
+          else if (this.selectedId || this.selectedEdgeId) { e.preventDefault(); this.select(null); }
+          break;
         case "F2":
           e.preventDefault();
           if (sel) this.startEdit(sel);
@@ -382,7 +457,8 @@ export class Renderer {
         case "Delete":
         case "Backspace":
           e.preventDefault();
-          this.deleteSelected();
+          if (this.selectedEdgeId) this.deleteEdge(this.selectedEdgeId);
+          else this.deleteSelected();
           break;
         case "ArrowLeft": {
           e.preventDefault();
@@ -433,6 +509,8 @@ export class Renderer {
 
     this.svg.addEventListener("pointerdown", (e) => {
       this.host.focus(); // stage owns the keyboard while focused
+      if (this.linkingFrom) return; // click handler completes/cancels the link
+      if ((e.target as Element).closest("[data-edge-id]")) return; // edge → let click select it
       const target = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
       if (!target?.dataset.id) { this.select(null); return; }
       const n = this.graph.nodes.get(target.dataset.id);
@@ -484,8 +562,16 @@ export class Renderer {
     // is universal. Idempotent with the pointerdown selection above.
     this.svg.addEventListener("click", (e) => {
       this.host.focus();
-      const target = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
-      this.select(target?.dataset.id ?? null);
+      const nodeEl = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
+      const edgeEl = (e.target as Element).closest("[data-edge-id]") as SVGGElement | null;
+      if (this.linkingFrom) {
+        if (nodeEl?.dataset.id) this.completeLink(nodeEl.dataset.id);
+        else this.cancelLink();
+        return;
+      }
+      if (nodeEl?.dataset.id) this.select(nodeEl.dataset.id);
+      else if (edgeEl?.dataset.edgeId) this.selectEdge(edgeEl.dataset.edgeId);
+      else this.select(null);
     });
   }
 

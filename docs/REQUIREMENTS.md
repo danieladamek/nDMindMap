@@ -151,7 +151,7 @@ philosophy) stays in the UI, not the engine. **What already exists in the
 scaffold:** SVG render + layout, drag/select, add-node, connect-nodes (typed
 relation), typed-node/typed-edge model with attributes, `.ndmm.md` round-trip.
 
-### Phase 1 — The typed mind map you can capture into fast  ⟵ _build target_
+### Phase 1 — The typed mind map you can capture into fast  ✅ COMPLETE (2026-07-15)
 > Goal: it *feels* like nDMindMap, not a generic mind-mapper. Keyboard-first
 > capture + node/edge typing + attributes + visual channels, all round-tripping to
 > file. This is the seed everything else grows from.
@@ -174,9 +174,13 @@ relation), typed-node/typed-edge model with attributes, `.ndmm.md` round-trip.
   (rounded / rect / pill / ellipse / diamond), fill color with auto-contrast
   label, size scale (S/M/L); node **type** shown as a small tag above the node.
   (`visuals.ts` is the shared vocabulary.)
-- **P1.5 Edge typing UI.** ⟵ _next._ Inline picker to set/define an edge's relation
-  type (default `child-of`), replacing the `prompt()`; edges render their type
-  label. (Cross-links already render their type; this adds creating/retyping.)
+- **P1.5 Edge typing UI.** ✅ **DONE (2026-07-15, verified).** **Link mode** (`+ Link`
+  button / `L` key): with a node selected, click a target to draw a typed edge.
+  Clicking a cross-link selects it; the inspector becomes an **edge editor** —
+  relation input + quick-pick chips of existing relation types (promotion-friendly),
+  Connects (src→tgt), **Parameters** (edge attributes = parameterized edges), and
+  Delete. Selected edge renders solid/highlighted. Round-trips, e.g.
+  `- [nd] --expressed-in--> [format] {strength: strong}`.
 - **P1.6 Persistence.** ✅ **DONE for node fields (2026-07-15, verified).** Type /
   shape / color / size ride as **reserved attribute keys** in `.ndmm.md` (no format
   change) and round-trip idempotently, e.g.
