@@ -217,8 +217,13 @@ survives byte-faithfully.
   **Drag a row onto another to re-parent** (cycle-guarded with a friendly status
   message); **drop on the panel background to make a node a root**; double-click
   to rename inline (inspector stays in sync).
-- **Dimension views:** show/hide/filter by edge type; "project" one chosen
-  dimension onto the canvas.
+- **Dimension views.** ✅ **DONE (2026-07-15, verified).** A "dimensions:" chip bar
+  (top-left of the canvas, shown when typed cross-links exist) — one chip per
+  relation type (in-use ∪ registered); click to show/hide that dimension's edges.
+  View state (not persisted); hiding a dimension deselects any selected edge of
+  that type so the inspector never edits something invisible.
+
+**PHASE 2 COMPLETE (2026-07-15).**
 
 ### Phase 3 — Interrogation (the distinctive payoff)
 - **Abstraction-level / kind** on nodes + an **edge-semantics vocabulary**

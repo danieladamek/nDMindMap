@@ -75,6 +75,20 @@ body {
   border: 1px solid var(--node-stroke); border-radius: 5px; padding: 3px 4px; max-width: 100px;
 }
 
+/* Dimension filters (cross-link relation types) */
+.ndmm-filters {
+  position: absolute; left: 12px; top: 10px; z-index: 5;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+  background: var(--panel); border: 1px solid var(--node-stroke); border-radius: 999px;
+  padding: 4px 10px; box-shadow: 0 1px 6px rgba(0,0,0,0.12);
+}
+.ndmm-filters-title { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.ndmm-filter-chip {
+  font: inherit; font-size: 11px; color: var(--text); background: var(--node);
+  border: 1px solid var(--crosslink); border-radius: 999px; padding: 2px 9px; cursor: pointer;
+}
+.ndmm-filter-chip.is-hidden { border-color: var(--node-stroke); color: var(--muted); text-decoration: line-through; opacity: 0.7; }
+
 /* Legend (bound channels) */
 .ndmm-legend {
   position: absolute; left: 12px; bottom: 12px; z-index: 5;

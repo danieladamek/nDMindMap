@@ -69,7 +69,10 @@ stage.className = "ndmm-stage";
 const legend = document.createElement("div");
 legend.className = "ndmm-legend";
 legend.style.display = "none";
-stage.append(legend);
+const filters = document.createElement("div");
+filters.className = "ndmm-filters";
+filters.style.display = "none";
+stage.append(legend, filters);
 
 const status = toolbar.querySelector<HTMLSpanElement>("#status")!;
 status.textContent = IDLE_HINT;
@@ -106,7 +109,33 @@ const inspector = new Inspector(body, { onEdit: () => { renderer.relayout(); ref
 /** One refresh for everything that mirrors graph state (bind UI, legend, list). */
 function refreshUI(): void {
   refreshBindingUI();
+  refreshFilters();
   list.render(doc.graph, selectedNodeId);
+}
+
+/** Dimension filters — one chip per relation type in use; click to show/hide. */
+function refreshFilters(): void {
+  const types = [...new Set([...renderer.relationTypes(), ...doc.graph.edgeTypes.keys()])].sort();
+  if (!types.length) { filters.style.display = "none"; return; }
+  filters.style.display = "flex";
+  filters.replaceChildren();
+  const title = document.createElement("span");
+  title.className = "ndmm-filters-title";
+  title.textContent = "dimensions:";
+  filters.append(title);
+  for (const t of types) {
+    const hidden = renderer.hiddenRelations.has(t);
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ndmm-filter-chip" + (hidden ? " is-hidden" : "");
+    chip.textContent = t;
+    chip.title = hidden ? `show ${t} edges` : `hide ${t} edges`;
+    chip.addEventListener("click", () => {
+      renderer.toggleRelation(t);
+      refreshFilters();
+    });
+    filters.append(chip);
+  }
 }
 
 // --- global attribution (bind color/shape/size to a dimension) -------------

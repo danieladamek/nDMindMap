@@ -43,6 +43,8 @@ export class Renderer {
   private selectedId: string | null = null;
   private selectedEdgeId: string | null = null;
   private linkingFrom: string | null = null;
+  /** Relation types currently hidden on the canvas (view state, not doc state). */
+  readonly hiddenRelations = new Set<string>();
   private editing = false;
   private editingIsNew = false;
   private grid = false;
@@ -173,6 +175,7 @@ export class Renderer {
         path.setAttribute("class", "ndmm-edge");
         this.edgeLayer.append(path);
       } else {
+        if (this.hiddenRelations.has(e.relation)) continue; // filtered dimension
         const ax = (a.x ?? 0) + this.nodeWidth(a) / 2;
         const bx = (b.x ?? 0) + this.nodeWidth(b) / 2;
         const mx = (ax + bx) / 2;
@@ -314,6 +317,18 @@ export class Renderer {
     const set = new Set<string>();
     for (const e of this.graph.edges.values()) if (e.relation !== CHILD_OF) set.add(e.relation);
     return [...set].sort();
+  }
+
+  /** Show/hide one relation type on the canvas (dimension filter). Deselects a
+   *  hidden edge so the inspector never edits something invisible. */
+  toggleRelation(relation: string): void {
+    if (this.hiddenRelations.has(relation)) this.hiddenRelations.delete(relation);
+    else {
+      this.hiddenRelations.add(relation);
+      const sel = this.selectedEdgeId ? this.graph.edges.get(this.selectedEdgeId) : null;
+      if (sel && sel.relation === relation) this.select(null);
+    }
+    this.draw();
   }
 
   // --- capture operations ---------------------------------------------------
