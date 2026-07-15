@@ -202,10 +202,14 @@ survives byte-faithfully.
   registers the current one-off — node promotion captures the node's color/shape as
   the type's defaults. Assigning a registered node type applies those defaults
   (verified: promote `pillar`=violet-diamond, assign to another node → it restyles).
-- **Visual-channel ↔ meaning binding (global attribution).** ⟵ _next._ Bind
-  color/shape/size to an attribute or type **globally** (e.g. color = domain, size =
-  confidence) with a **legend**; live (changing the binding re-styles all instances,
-  vs. today's assignment-time copy); optional/reversible; unbound = aesthetic.
+- **Visual-channel ↔ meaning binding (global attribution).** ✅ **DONE (2026-07-15,
+  verified).** Toolbar **Bind** controls map color/shape/size → `type` or any
+  attribute key, **live** (a `ChannelResolver` derives every node's effective
+  styling per draw; distinct values get palette entries in first-seen order;
+  all-numeric size dims bucket into S/M/L by range). **Legend** overlay
+  (bottom-left) shows value→channel mappings per bound channel. Unbound = the
+  node's own aesthetic attr; fully reversible. Persists as a `## Bindings` section
+  (`- color: domain`), idempotent.
 - **Map ⇄ List dual view:** free-flow outline alongside the map; **drag-from-list-
   to-parent**; attribute/shape/color editing in both.
 - **Dimension views:** show/hide/filter by edge type; "project" one chosen

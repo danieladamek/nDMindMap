@@ -72,6 +72,12 @@ export function stringify(doc: MindMapDoc): string {
     lines.push("", "## Edge Types", "");
     for (const t of doc.graph.edgeTypes.values()) lines.push(`- ${t.name}${stringifyAttrs(t.attrs)}`);
   }
+  // Global channel↔dimension bindings.
+  const bindingEntries = (["color", "shape", "size"] as const).filter((c) => doc.graph.bindings[c]);
+  if (bindingEntries.length) {
+    lines.push("", "## Bindings", "");
+    for (const c of bindingEntries) lines.push(`- ${c}: ${doc.graph.bindings[c]}`);
+  }
   lines.push("");
   return lines.join("\n");
 }
@@ -84,7 +90,7 @@ const TYPE_RE = /^-\s*(.*?)(?:\s*\{(.*)\})?\s*$/;
 export function parse(text: string): MindMapDoc {
   const graph = new Graph();
   let title = "Untitled";
-  let section: "nodes" | "edges" | "nodetypes" | "edgetypes" | null = null;
+  let section: "nodes" | "edges" | "nodetypes" | "edgetypes" | "bindings" | null = null;
 
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -98,6 +104,7 @@ export function parse(text: string): MindMapDoc {
     // Type sections must be checked before the generic node/edge headers.
     if (/^##\s*node\s*types/i.test(line)) { section = "nodetypes"; continue; }
     if (/^##\s*edge\s*types/i.test(line)) { section = "edgetypes"; continue; }
+    if (/^##\s*bindings/i.test(line)) { section = "bindings"; continue; }
     if (/^##\s*nodes/i.test(line)) { section = "nodes"; continue; }
     if (/^##\s*edges/i.test(line)) { section = "edges"; continue; }
     if (line.startsWith("#")) { section = null; continue; }
@@ -135,6 +142,9 @@ export function parse(text: string): MindMapDoc {
     } else if (section === "edgetypes") {
       const m = line.match(TYPE_RE);
       if (m && m[1].trim()) graph.registerEdgeType(m[1].trim(), parseAttrs(m[2]));
+    } else if (section === "bindings") {
+      const m = line.match(/^-\s*(color|shape|size)\s*:\s*(.+?)\s*$/i);
+      if (m) graph.bindings[m[1].toLowerCase() as "color" | "shape" | "size"] = m[2];
     }
   }
 

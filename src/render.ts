@@ -18,7 +18,7 @@
 import type { Graph, GraphNode, GraphEdge } from "./model.js";
 import { CHILD_OF } from "./model.js";
 import { layoutTree, isPinned } from "./layout.js";
-import { nodeShape, nodeColor, nodeScale, nodeType, contrastText, type Shape } from "./visuals.js";
+import { ChannelResolver, nodeType, contrastText, type Shape } from "./visuals.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const NODE_H = 34;
@@ -49,9 +49,11 @@ export class Renderer {
   private gridSize: number;
 
   private measureCtx = document.createElement("canvas").getContext("2d")!;
+  private resolver: ChannelResolver;
 
   constructor(private host: HTMLElement, private graph: Graph, private opts: RendererOptions = {}) {
     this.gridSize = opts.gridSize ?? 20;
+    this.resolver = new ChannelResolver(graph);
 
     this.svg = document.createElementNS(SVG_NS, "svg");
     this.svg.setAttribute("class", "ndmm-canvas");
@@ -93,18 +95,18 @@ export class Renderer {
   // --- measurement ----------------------------------------------------------
 
   private nodeWidth(n: GraphNode): number {
-    const scale = nodeScale(n);
+    const scale = this.resolver.scale(n);
     this.measureCtx.font = `${13 * scale}px -apple-system, system-ui, sans-serif`;
     const w = this.measureCtx.measureText(n.label || "…").width;
     const base = Math.max(MIN_W * scale, Math.ceil(w) + PAD_X * 2 * scale);
     // Round shapes need extra width to keep the label inside the outline.
-    const shape = nodeShape(n);
+    const shape = this.resolver.shape(n);
     return shape === "diamond" ? base * 1.5 : shape === "ellipse" ? base * 1.3 : base;
   }
 
   private nodeHeight(n: GraphNode): number {
-    const h = NODE_H * nodeScale(n);
-    return nodeShape(n) === "diamond" ? h * 1.4 : h;
+    const h = NODE_H * this.resolver.scale(n);
+    return this.resolver.shape(n) === "diamond" ? h * 1.4 : h;
   }
 
   /** Build the outline element for a shape, positioned with (x, y) = left-edge /
@@ -148,6 +150,8 @@ export class Renderer {
   }
 
   private draw(): void {
+    // Fresh resolver each draw so binding/attr changes always take effect.
+    this.resolver = new ChannelResolver(this.graph);
     this.edgeLayer.replaceChildren();
     this.nodeLayer.replaceChildren();
 
@@ -204,14 +208,14 @@ export class Renderer {
       const h = this.nodeHeight(n);
       const x = n.x ?? 0;
       const y = n.y ?? 0;
-      const scale = nodeScale(n);
-      const color = nodeColor(n);
+      const scale = this.resolver.scale(n);
+      const color = this.resolver.color(n);
 
       const g = document.createElementNS(SVG_NS, "g");
       g.setAttribute("class", "ndmm-node" + (n.id === this.selectedId ? " is-selected" : "") + (isPinned(n) ? " is-pinned" : ""));
       g.dataset.id = n.id;
 
-      const shape = this.makeShape(nodeShape(n), x, y, w, h);
+      const shape = this.makeShape(this.resolver.shape(n), x, y, w, h);
       if (color) {
         shape.style.fill = color;
         shape.style.stroke = color;
@@ -592,6 +596,11 @@ export class Renderer {
   setGrid(on: boolean): void {
     this.grid = on;
     this.gridRect.style.display = on ? "block" : "none";
+  }
+
+  /** Legend data for the currently bound channels (post-draw). */
+  legendData(): ReturnType<ChannelResolver["legend"]> {
+    return this.resolver.legend();
   }
 
   focusCanvas(): void {

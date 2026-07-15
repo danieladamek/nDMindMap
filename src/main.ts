@@ -48,6 +48,12 @@ toolbar.innerHTML = `
   <button id="link" title="Link the selected node to another (typed relationship) — or press L">+ Link</button>
   <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
   <label class="ndmm-toggle"><input type="checkbox" id="grid"> Grid</label>
+  <span class="ndmm-bindgroup" title="Bind a visual channel to a dimension (global attribution); unbound = aesthetic">
+    Bind:
+    <label>color <select id="bind-color" class="ndmm-bind"></select></label>
+    <label>shape <select id="bind-shape" class="ndmm-bind"></select></label>
+    <label>size <select id="bind-size" class="ndmm-bind"></select></label>
+  </span>
   <button id="export">Export</button>
   <button id="import">Import</button>
   <span class="spacer"></span>
@@ -58,13 +64,100 @@ const body = document.createElement("div");
 body.className = "ndmm-body";
 const stage = document.createElement("div");
 stage.className = "ndmm-stage";
+const legend = document.createElement("div");
+legend.className = "ndmm-legend";
+legend.style.display = "none";
+stage.append(legend);
 body.append(stage);
 app.append(toolbar, body);
 
 const status = toolbar.querySelector<HTMLSpanElement>("#status")!;
 status.textContent = IDLE_HINT;
 
-const inspector = new Inspector(body, { onEdit: () => renderer.relayout() });
+const inspector = new Inspector(body, { onEdit: () => { renderer.relayout(); refreshBindingUI(); } });
+
+// --- global attribution (bind color/shape/size to a dimension) -------------
+
+const SHAPE_GLYPHS: Record<string, string> = { rounded: "▢", rect: "▭", pill: "⬭", ellipse: "⬯", diamond: "◇" };
+const bindSelects = {
+  color: toolbar.querySelector<HTMLSelectElement>("#bind-color")!,
+  shape: toolbar.querySelector<HTMLSelectElement>("#bind-shape")!,
+  size: toolbar.querySelector<HTMLSelectElement>("#bind-size")!,
+};
+
+/** Dimensions a channel can bind to: the node type, or any attr key in use. */
+function dimensionSources(): string[] {
+  const keys = new Set<string>();
+  for (const n of doc.graph.nodes.values()) {
+    for (const k of Object.keys(n.attrs)) {
+      if (!["pinned", "type", "shape", "color", "size"].includes(k)) keys.add(k);
+    }
+  }
+  return ["type", ...[...keys].sort()];
+}
+
+/** Rebuild the binding dropdowns + legend from the current graph state. */
+function refreshBindingUI(): void {
+  const sources = dimensionSources();
+  for (const [channel, sel] of Object.entries(bindSelects) as ["color" | "shape" | "size", HTMLSelectElement][]) {
+    const current = doc.graph.bindings[channel] ?? "";
+    sel.replaceChildren();
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "—";
+    sel.append(none);
+    for (const s of sources) {
+      const o = document.createElement("option");
+      o.value = s;
+      o.textContent = s;
+      sel.append(o);
+    }
+    // A binding to a dimension no longer in use still shows (and stays valid).
+    if (current && !sources.includes(current)) {
+      const o = document.createElement("option");
+      o.value = current;
+      o.textContent = current;
+      sel.append(o);
+    }
+    sel.value = current;
+  }
+
+  // Legend for bound channels.
+  const data = renderer?.legendData() ?? [];
+  if (!data.length) { legend.style.display = "none"; return; }
+  legend.style.display = "block";
+  legend.replaceChildren();
+  for (const group of data) {
+    const h = document.createElement("div");
+    h.className = "ndmm-legend-title";
+    h.textContent = `${group.channel} = ${group.source}`;
+    legend.append(h);
+    for (const e of group.entries) {
+      const row = document.createElement("div");
+      row.className = "ndmm-legend-row";
+      const chip = document.createElement("span");
+      chip.className = "ndmm-legend-chip";
+      if (group.channel === "color") chip.style.background = e.channelValue;
+      else if (group.channel === "shape") chip.textContent = SHAPE_GLYPHS[e.channelValue] ?? e.channelValue;
+      else chip.textContent = e.channelValue.toUpperCase();
+      const val = document.createElement("span");
+      val.textContent = group.channel === "size" && group.entries.length === 2
+        ? `${e.channelValue === "s" ? "min" : "max"} (${e.value})`
+        : e.value;
+      row.append(chip, val);
+      legend.append(row);
+    }
+  }
+}
+
+for (const [channel, sel] of Object.entries(bindSelects) as ["color" | "shape" | "size", HTMLSelectElement][]) {
+  sel.addEventListener("change", () => {
+    if (sel.value) doc.graph.bindings[channel] = sel.value;
+    else delete doc.graph.bindings[channel];
+    renderer.relayout();
+    refreshBindingUI();
+  });
+}
 
 function mount(graph: Graph): Renderer {
   inspector.setGraph(graph);
@@ -90,12 +183,13 @@ function mount(graph: Graph): Renderer {
     onLinkModeChange: (active) => {
       if (active) status.textContent = "Link mode — click a target node (Esc to cancel)";
     },
-    onChange: () => { /* Phase 1: hook for dirty-tracking / autosave later */ },
+    onChange: () => refreshBindingUI(),
   });
 }
 
 renderer = mount(doc.graph);
 renderer.focusCanvas();
+refreshBindingUI();
 
 // --- toolbar --------------------------------------------------------------
 
@@ -139,6 +233,7 @@ toolbar.querySelector("#import")!.addEventListener("click", () => {
     renderer = mount(doc.graph);
     inspector.show(null);
     renderer.focusCanvas();
+    refreshBindingUI();
     status.textContent = `imported: ${doc.title}`;
   });
   input.click();

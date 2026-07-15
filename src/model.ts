@@ -47,6 +47,17 @@ export interface TypeDef {
   attrs: Record<string, Scalar>;
 }
 
+/**
+ * Global attribution: which dimension each visual channel is bound to.
+ * A value is either `"type"` (the node's type) or an attribute key; an absent
+ * entry means the channel is unbound — purely aesthetic, per-node.
+ */
+export interface Bindings {
+  color?: string;
+  shape?: string;
+  size?: string;
+}
+
 let counter = 0;
 /** Small, dependency-free id generator. Stable within a session. */
 export function newId(prefix = "n"): string {
@@ -60,6 +71,8 @@ export class Graph {
   /** The schema registry — types promoted from one-offs (insertion-ordered). */
   readonly nodeTypes = new Map<string, TypeDef>();
   readonly edgeTypes = new Map<string, TypeDef>();
+  /** Global channel↔dimension bindings (see `Bindings`). Mutated in place. */
+  readonly bindings: Bindings = {};
 
   /** Register (or update) a global node type. Returns the stored def. */
   registerNodeType(name: string, attrs: Record<string, Scalar> = {}): TypeDef {

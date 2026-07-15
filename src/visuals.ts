@@ -6,7 +6,7 @@
  * reserved (layout uses it). Everything else in `attrs` is a free-form dimension.
  */
 
-import type { GraphNode, Scalar } from "./model.js";
+import type { Graph, GraphNode, Scalar } from "./model.js";
 
 export type Shape = "rounded" | "rect" | "pill" | "ellipse" | "diamond";
 
@@ -69,4 +69,119 @@ export function contrastText(hex: string): string {
   const int = parseInt(m[1], 16);
   const r = (int >> 16) & 255, g = (int >> 8) & 255, b = int & 255;
   return (r * 299 + g * 587 + b * 114) / 1000 >= 140 ? "#14161b" : "#ffffff";
+}
+
+// --- global attribution (channel ↔ dimension binding) -----------------------
+
+/** Read a node's value along a bound dimension ("type" or an attribute key). */
+export function dimensionValue(n: GraphNode, source: string): Scalar | undefined {
+  const v = source === "type" ? n.attrs.type : n.attrs[source];
+  return v === "" ? undefined : v;
+}
+
+/** One legend row: a dimension value and the channel value it maps to. */
+export interface LegendEntry {
+  value: string;
+  channelValue: string;
+}
+
+const BOUND_PALETTE = COLORS.filter((c) => c.value).map((c) => c.value);
+const BOUND_SHAPES: Shape[] = SHAPES.map((s) => s.value);
+const SIZE_ORDER: SizeKey[] = ["s", "m", "l"];
+
+/**
+ * Resolves each node's *effective* visual channels: a bound channel derives its
+ * value from the node's position along the bound dimension (distinct values are
+ * assigned palette entries in first-seen node order — stable for a given doc);
+ * an unbound channel falls through to the node's own aesthetic attr.
+ *
+ * Rebuilt per draw — O(nodes), cheap, and always in sync with the graph.
+ */
+export class ChannelResolver {
+  private colorMap = new Map<string, string>();
+  private shapeMap = new Map<string, Shape>();
+  private sizeMap = new Map<string, SizeKey>();
+  private numericSize: { min: number; max: number } | null = null;
+
+  constructor(private graph: Graph) {
+    const b = graph.bindings;
+    if (b.color) this.assign(b.color, this.colorMap, BOUND_PALETTE);
+    if (b.shape) this.assign(b.shape, this.shapeMap, BOUND_SHAPES);
+    if (b.size) this.buildSize(b.size);
+  }
+
+  /** Map each distinct value of `source` to the next entry in `palette` (cycling). */
+  private assign<T>(source: string, map: Map<string, T>, palette: readonly T[]): void {
+    for (const n of this.graph.nodes.values()) {
+      const v = dimensionValue(n, source);
+      if (v === undefined) continue;
+      const key = String(v);
+      if (!map.has(key)) map.set(key, palette[map.size % palette.length]);
+    }
+  }
+
+  /** Size: all-numeric values bucket into s/m/l by range; otherwise cycle. */
+  private buildSize(source: string): void {
+    const values: Scalar[] = [];
+    for (const n of this.graph.nodes.values()) {
+      const v = dimensionValue(n, source);
+      if (v !== undefined) values.push(v);
+    }
+    if (values.length && values.every((v) => typeof v === "number")) {
+      const nums = values as number[];
+      this.numericSize = { min: Math.min(...nums), max: Math.max(...nums) };
+    } else {
+      for (const v of values) {
+        const key = String(v);
+        if (!this.sizeMap.has(key)) this.sizeMap.set(key, SIZE_ORDER[this.sizeMap.size % SIZE_ORDER.length]);
+      }
+    }
+  }
+
+  color(n: GraphNode): string {
+    const src = this.graph.bindings.color;
+    if (!src) return nodeColor(n);
+    const v = dimensionValue(n, src);
+    return v === undefined ? "" : this.colorMap.get(String(v)) ?? "";
+  }
+
+  shape(n: GraphNode): Shape {
+    const src = this.graph.bindings.shape;
+    if (!src) return nodeShape(n);
+    const v = dimensionValue(n, src);
+    return v === undefined ? "rounded" : this.shapeMap.get(String(v)) ?? "rounded";
+  }
+
+  sizeKey(n: GraphNode): SizeKey {
+    const src = this.graph.bindings.size;
+    if (!src) return nodeSizeKey(n);
+    const v = dimensionValue(n, src);
+    if (v === undefined) return "m";
+    if (this.numericSize) {
+      const { min, max } = this.numericSize;
+      if (max === min) return "m";
+      const t = ((v as number) - min) / (max - min);
+      return t < 1 / 3 ? "s" : t < 2 / 3 ? "m" : "l";
+    }
+    return this.sizeMap.get(String(v)) ?? "m";
+  }
+
+  scale(n: GraphNode): number {
+    return SIZES[this.sizeKey(n)];
+  }
+
+  /** Legend data for every bound channel (empty when nothing is bound). */
+  legend(): { channel: "color" | "shape" | "size"; source: string; entries: LegendEntry[] }[] {
+    const out: { channel: "color" | "shape" | "size"; source: string; entries: LegendEntry[] }[] = [];
+    const b = this.graph.bindings;
+    if (b.color) out.push({ channel: "color", source: b.color, entries: [...this.colorMap].map(([value, c]) => ({ value, channelValue: c })) });
+    if (b.shape) out.push({ channel: "shape", source: b.shape, entries: [...this.shapeMap].map(([value, s]) => ({ value, channelValue: s })) });
+    if (b.size) {
+      const entries: LegendEntry[] = this.numericSize
+        ? [{ value: `${this.numericSize.min}`, channelValue: "s" }, { value: `${this.numericSize.max}`, channelValue: "l" }]
+        : [...this.sizeMap].map(([value, s]) => ({ value, channelValue: s }));
+      out.push({ channel: "size", source: b.size, entries });
+    }
+    return out;
+  }
 }
