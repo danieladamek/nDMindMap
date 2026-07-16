@@ -8,6 +8,7 @@
 
 import "./style.css";
 import { Graph } from "./model.js";
+import { RESERVED_ATTRS } from "./visuals.js";
 import { parse, stringify, type MindMapDoc } from "./serialize.js";
 import { Renderer } from "./render.js";
 import { Inspector } from "./inspector.js";
@@ -23,6 +24,9 @@ const SEED = `# nDMindMap: Welcome
 - [format] Human-readable file
 - [nd] n-dimensional nodes
 - [rel] Typed relationships
+- [levels] Abstraction levels
+- [pleasure] Pleasure {level: subjective-experience}
+- [dopamine] Dopamine ↑ {level: biomarker}
 
 ## Edges
 
@@ -31,7 +35,11 @@ const SEED = `# nDMindMap: Welcome
 - [format] --child-of--> [root]
 - [nd] --child-of--> [graph]
 - [rel] --child-of--> [graph]
+- [levels] --child-of--> [nd]
+- [pleasure] --child-of--> [levels]
+- [dopamine] --child-of--> [levels]
 - [rel] --lives-in--> [format]
+- [pleasure] --proxy-for--> [dopamine]
 `;
 
 const IDLE_HINT = "Tab = child · Enter = sibling · F2 = rename · L = link · ↑↓←→ = move · Del = remove";
@@ -147,15 +155,15 @@ const bindSelects = {
   size: toolbar.querySelector<HTMLSelectElement>("#bind-size")!,
 };
 
-/** Dimensions a channel can bind to: the node type, or any attr key in use. */
+/** Dimensions a channel can bind to: type, abstraction level, or any attr key in use. */
 function dimensionSources(): string[] {
   const keys = new Set<string>();
   for (const n of doc.graph.nodes.values()) {
     for (const k of Object.keys(n.attrs)) {
-      if (!["pinned", "type", "shape", "color", "size"].includes(k)) keys.add(k);
+      if (!RESERVED_ATTRS.has(k)) keys.add(k);
     }
   }
-  return ["type", ...[...keys].sort()];
+  return ["type", "level", ...[...keys].sort()];
 }
 
 /** Rebuild the binding dropdowns + legend from the current graph state. */

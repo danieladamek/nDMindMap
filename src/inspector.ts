@@ -10,6 +10,7 @@
 
 import type { Graph, GraphNode, GraphEdge, Scalar } from "./model.js";
 import { SHAPES, COLORS, SIZES, customAttrs, nodeShape, nodeColor, nodeSizeKey, nodeType } from "./visuals.js";
+import { SUGGESTED_LEVELS, EDGE_SEMANTICS, semanticsOf, nodeLevel } from "./semantics.js";
 
 /** Visual-channel keys a node type carries as defaults. */
 const CHANNEL_KEYS = ["color", "shape", "size"] as const;
@@ -148,6 +149,28 @@ export class Inspector {
     });
     typeField.append(typeInput, datalist, promote);
 
+    // Abstraction level — the "kind" dimension the interrogation payoff rests on.
+    const levelField = this.field("Abstraction level");
+    const levelInput = document.createElement("input");
+    levelInput.className = "insp-input";
+    levelInput.placeholder = "e.g. subjective-experience, biomarker…";
+    levelInput.value = nodeLevel(n);
+    levelInput.setAttribute("list", "ndmm-level-list");
+    const levelList = document.createElement("datalist");
+    levelList.id = "ndmm-level-list";
+    const knownLevels = new Set([...SUGGESTED_LEVELS, ...this.levelsInGraph()]);
+    for (const l of knownLevels) {
+      const o = document.createElement("option");
+      o.value = l;
+      levelList.append(o);
+    }
+    levelInput.addEventListener("change", () => {
+      const v = levelInput.value.trim();
+      if (v) n.attrs.level = v; else delete n.attrs.level;
+      this.edited();
+    });
+    levelField.append(levelInput, levelList);
+
     // Shape
     const shapeField = this.field("Shape");
     const shapeSel = document.createElement("select");
@@ -210,7 +233,17 @@ export class Inspector {
     idNote.className = "insp-id";
     idNote.textContent = `id: ${n.id}`;
 
-    this.el.append(labelField, typeField, shapeField, colorField, sizeField, attrsField, idNote);
+    this.el.append(labelField, typeField, levelField, shapeField, colorField, sizeField, attrsField, idNote);
+  }
+
+  /** Distinct abstraction levels already assigned across the graph. */
+  private levelsInGraph(): string[] {
+    const out = new Set<string>();
+    for (const n of this.graph?.nodes.values() ?? []) {
+      const l = nodeLevel(n);
+      if (l) out.add(l);
+    }
+    return [...out];
   }
 
   /** Copy a node type's default visual channels onto the node. */
@@ -224,9 +257,11 @@ export class Inspector {
     if (!e || !ctx) return;
     this.el.replaceChildren();
 
-    // Relation type — combobox over registered + in-use types, with Promote.
+    // Relation type — combobox over the honest-semantics vocabulary + registered
+    // + in-use types, with Promote.
     const registered = [...(this.graph?.edgeTypes.keys() ?? [])];
-    const allTypes = [...new Set([...registered, ...ctx.relationTypes])].sort();
+    const vocab = EDGE_SEMANTICS.map((s) => s.name);
+    const allTypes = [...new Set([...vocab, ...registered, ...ctx.relationTypes])].sort();
 
     const relField = this.field("Relation");
     const relInput = document.createElement("input");
@@ -243,6 +278,7 @@ export class Inspector {
     }
     relInput.addEventListener("input", () => {
       e.relation = relInput.value.trim() || "relates-to";
+      updateHint();
       this.edited(false);
     });
     const promote = document.createElement("button");
@@ -260,6 +296,22 @@ export class Inspector {
       this.edited();
     });
     relField.append(relInput, datalist, promote);
+
+    // Semantic hint — what this relation honestly claims (and its level rule).
+    const hint = document.createElement("div");
+    hint.className = "insp-semantics";
+    const updateHint = () => {
+      const s = semanticsOf(e.relation);
+      if (s) {
+        hint.textContent = `${s.hint}`;
+        hint.dataset.levels = s.levels;
+        hint.style.display = "block";
+      } else {
+        hint.style.display = "none";
+      }
+    };
+    updateHint();
+    relField.append(hint);
 
     // Quick-pick chips (registered ∪ in-use).
     if (allTypes.length) {

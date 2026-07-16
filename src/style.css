@@ -233,6 +233,13 @@ body {
 .insp-promote:hover:not(:disabled) { border-color: var(--accent); }
 .insp-promote:disabled { color: var(--muted); cursor: default; opacity: 0.7; }
 .insp-conn { font-size: 13px; color: var(--text); }
+.insp-semantics {
+  font-size: 11px; color: var(--muted); line-height: 1.4; margin-top: 6px;
+  padding: 5px 8px; border-left: 2px solid var(--node-stroke); border-radius: 0 4px 4px 0;
+  background: color-mix(in srgb, var(--node) 60%, transparent);
+}
+.insp-semantics[data-levels="crossing"] { border-left-color: var(--accent); }
+.insp-semantics[data-levels="same"] { border-left-color: var(--crosslink); }
 .insp-delete-edge {
   font: inherit; font-size: 12px; color: var(--pin); background: transparent;
   border: 1px solid var(--node-stroke); border-radius: 6px; padding: 7px; cursor: pointer; margin-top: 4px;

@@ -32,8 +32,9 @@ export const COLORS: { value: string; label: string }[] = [
 export type SizeKey = "s" | "m" | "l";
 export const SIZES: Record<SizeKey, number> = { s: 0.85, m: 1, l: 1.3 };
 
-/** Reserved keys never shown in the free-form attribute editor. */
-export const RESERVED_ATTRS = new Set(["pinned", "type", "shape", "color", "size"]);
+/** Reserved keys never shown in the free-form attribute editor. `level` is the
+ *  node's abstraction level (see semantics.ts) — dedicated field, like `type`. */
+export const RESERVED_ATTRS = new Set(["pinned", "type", "shape", "color", "size", "level"]);
 
 export function nodeShape(n: GraphNode): Shape {
   const s = n.attrs.shape;
