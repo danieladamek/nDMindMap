@@ -11,6 +11,7 @@
   --node-stroke: #3a4560;
   --node-selected: #6aa9ff;
   --pin: #ffb86b;
+  --danger: #ff6b6b;
   --gridline: #2a3140;
   color-scheme: dark light;
 }
@@ -29,6 +30,7 @@
     --node-stroke: #c3c9d4;
     --node-selected: #2f6fe0;
     --pin: #d98a2b;
+    --danger: #d64545;
     --gridline: #e7ebf1;
   }
 }
@@ -150,6 +152,9 @@ body {
 .ndmm-crosslink-g.is-selected .ndmm-crosslink { stroke-width: 2.6; opacity: 1; stroke-dasharray: none; }
 .ndmm-crosslink-g.is-selected .ndmm-edge-label { fill: var(--crosslink); font-weight: 600; }
 .ndmm-edge-label { fill: var(--edge-label); font-size: 10px; text-anchor: middle; user-select: none; }
+/* Category-error edges (P3.2) — solid red, so a level-crossing collapse reads at a glance. */
+.ndmm-crosslink-g.is-warning .ndmm-crosslink { stroke: var(--danger); stroke-dasharray: none; opacity: 1; }
+.ndmm-crosslink-g.is-warning .ndmm-edge-label { fill: var(--danger); font-weight: 600; }
 
 /* Link mode: crosshair while choosing a target */
 .ndmm-stage.is-linking .ndmm-canvas { cursor: crosshair; }
@@ -245,6 +250,33 @@ body {
   border: 1px solid var(--node-stroke); border-radius: 6px; padding: 7px; cursor: pointer; margin-top: 4px;
 }
 .insp-delete-edge:hover { border-color: var(--pin); }
+
+/* Category-error warning box in the edge inspector */
+.insp-warning {
+  border: 1px solid var(--danger); border-radius: 6px; padding: 8px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  display: flex; flex-direction: column; gap: 7px;
+}
+.insp-warning-msg { font-size: 11.5px; line-height: 1.4; color: var(--text); }
+.insp-warning-fix {
+  font: inherit; font-size: 12px; color: #fff; background: var(--danger);
+  border: none; border-radius: 6px; padding: 6px 8px; cursor: pointer; align-self: flex-start;
+}
+.insp-warning-fix:hover { filter: brightness(1.08); }
+
+/* Lint banner on the stage */
+.ndmm-lint {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: #fff; background: var(--danger);
+  padding: 5px 12px; border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+.ndmm-lint-label { font-weight: 600; }
+.ndmm-lint-jump {
+  font: inherit; font-size: 11px; color: var(--danger); background: #fff;
+  border: none; border-radius: 999px; padding: 2px 9px; cursor: pointer;
+}
+.ndmm-lint-jump:hover { filter: brightness(0.95); }
 
 /* Inline editor */
 .ndmm-edit {

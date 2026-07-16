@@ -19,6 +19,7 @@ import type { Graph, GraphNode, GraphEdge } from "./model.js";
 import { CHILD_OF } from "./model.js";
 import { layoutTree, isPinned } from "./layout.js";
 import { ChannelResolver, nodeType, contrastText, type Shape } from "./visuals.js";
+import { lintGraph, type LintWarning } from "./lint.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const NODE_H = 34;
@@ -52,6 +53,8 @@ export class Renderer {
 
   private measureCtx = document.createElement("canvas").getContext("2d")!;
   private resolver: ChannelResolver;
+  /** Category-error warnings from the last draw (see lint.ts). */
+  private lastWarnings: LintWarning[] = [];
 
   constructor(private host: HTMLElement, private graph: Graph, private opts: RendererOptions = {}) {
     this.gridSize = opts.gridSize ?? 20;
@@ -154,6 +157,9 @@ export class Renderer {
   private draw(): void {
     // Fresh resolver each draw so binding/attr changes always take effect.
     this.resolver = new ChannelResolver(this.graph);
+    // Category-error lint, recomputed per draw — always in sync with levels/edges.
+    this.lastWarnings = lintGraph(this.graph);
+    const warnedEdges = new Set(this.lastWarnings.map((w) => w.edgeId));
     this.edgeLayer.replaceChildren();
     this.nodeLayer.replaceChildren();
 
@@ -181,7 +187,8 @@ export class Renderer {
         const mx = (ax + bx) / 2;
         const my = ((a.y ?? 0) + (b.y ?? 0)) / 2;
         const cg = document.createElementNS(SVG_NS, "g");
-        cg.setAttribute("class", "ndmm-crosslink-g" + (e.id === this.selectedEdgeId ? " is-selected" : ""));
+        const warned = warnedEdges.has(e.id);
+        cg.setAttribute("class", "ndmm-crosslink-g" + (e.id === this.selectedEdgeId ? " is-selected" : "") + (warned ? " is-warning" : ""));
         cg.dataset.edgeId = e.id;
 
         // Wide transparent hit line so a thin dashed edge is easy to click.
@@ -199,7 +206,7 @@ export class Renderer {
         label.setAttribute("x", String(mx));
         label.setAttribute("y", String(my - 4));
         label.setAttribute("class", "ndmm-edge-label");
-        label.textContent = e.relation || "…";
+        label.textContent = warned ? `⚠ ${e.relation || "…"}` : (e.relation || "…");
         cg.append(label);
         this.edgeLayer.append(cg);
       }
@@ -274,6 +281,11 @@ export class Renderer {
   /** Programmatic selection (e.g. from the list view). Fires onSelect. */
   selectNode(id: string | null): void {
     this.select(id);
+  }
+
+  /** Programmatic edge selection (e.g. from the lint banner). */
+  selectEdgeById(id: string): void {
+    this.selectEdge(id);
   }
 
   // --- typed cross-links (P1.5) --------------------------------------------
@@ -621,6 +633,11 @@ export class Renderer {
   /** Legend data for the currently bound channels (post-draw). */
   legendData(): ReturnType<ChannelResolver["legend"]> {
     return this.resolver.legend();
+  }
+
+  /** Category-error warnings from the last draw. */
+  warnings(): LintWarning[] {
+    return this.lastWarnings;
   }
 
   focusCanvas(): void {

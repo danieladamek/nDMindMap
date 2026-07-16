@@ -11,6 +11,7 @@
 import type { Graph, GraphNode, GraphEdge, Scalar } from "./model.js";
 import { SHAPES, COLORS, SIZES, customAttrs, nodeShape, nodeColor, nodeSizeKey, nodeType } from "./visuals.js";
 import { SUGGESTED_LEVELS, EDGE_SEMANTICS, semanticsOf, nodeLevel } from "./semantics.js";
+import { lintEdge } from "./lint.js";
 
 /** Visual-channel keys a node type carries as defaults. */
 const CHANNEL_KEYS = ["color", "shape", "size"] as const;
@@ -335,6 +336,23 @@ export class Inspector {
     connVal.textContent = `${ctx.sourceLabel} → ${ctx.targetLabel}`;
     conn.append(connVal);
 
+    // Category-error warning (P3.2) — surfaced with a one-click honest-fix.
+    let warnBox: HTMLElement | null = null;
+    const warning = this.graph ? lintEdge(this.graph, e) : null;
+    if (warning) {
+      warnBox = document.createElement("div");
+      warnBox.className = "insp-warning";
+      const msg = document.createElement("div");
+      msg.className = "insp-warning-msg";
+      msg.textContent = `⚠ ${warning.message}`;
+      const fix = document.createElement("button");
+      fix.type = "button";
+      fix.className = "insp-warning-fix";
+      fix.textContent = `Retype as ${warning.suggestion}`;
+      fix.addEventListener("click", () => { e.relation = warning.suggestion; this.edited(); });
+      warnBox.append(msg, fix);
+    }
+
     // Parameters (edge attributes — parameterized edges)
     const params = this.attrsSection("Parameters", e.attrs, Object.entries(e.attrs));
 
@@ -348,7 +366,7 @@ export class Inspector {
     idNote.className = "insp-id";
     idNote.textContent = `edge: ${e.id}`;
 
-    this.el.append(relField, conn, params, del, idNote);
+    this.el.append(relField, conn, ...(warnBox ? [warnBox] : []), params, del, idNote);
     if (focusRelation) { relInput.focus(); relInput.select(); }
   }
 

@@ -80,7 +80,10 @@ legend.style.display = "none";
 const filters = document.createElement("div");
 filters.className = "ndmm-filters";
 filters.style.display = "none";
-stage.append(legend, filters);
+const lintBanner = document.createElement("div");
+lintBanner.className = "ndmm-lint";
+lintBanner.style.display = "none";
+stage.append(legend, filters, lintBanner);
 
 const status = toolbar.querySelector<HTMLSpanElement>("#status")!;
 status.textContent = IDLE_HINT;
@@ -118,7 +121,27 @@ const inspector = new Inspector(body, { onEdit: () => { renderer.relayout(); ref
 function refreshUI(): void {
   refreshBindingUI();
   refreshFilters();
+  refreshLint();
   list.render(doc.graph, selectedNodeId);
+}
+
+/** Category-error banner — a click jumps to the first offending edge. */
+function refreshLint(): void {
+  const warnings = renderer?.warnings() ?? [];
+  if (!warnings.length) { lintBanner.style.display = "none"; return; }
+  lintBanner.style.display = "flex";
+  lintBanner.replaceChildren();
+  const n = warnings.length;
+  const label = document.createElement("span");
+  label.className = "ndmm-lint-label";
+  label.textContent = `⚠ ${n} category error${n === 1 ? "" : "s"}`;
+  const detail = document.createElement("button");
+  detail.type = "button";
+  detail.className = "ndmm-lint-jump";
+  detail.textContent = "review";
+  detail.title = "Select the first offending edge";
+  detail.addEventListener("click", () => renderer.selectEdgeById(warnings[0].edgeId));
+  lintBanner.append(label, detail);
 }
 
 /** Dimension filters — one chip per relation type in use; click to show/hide. */
