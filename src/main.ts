@@ -13,6 +13,7 @@ import { parse, stringify, type MindMapDoc } from "./serialize.js";
 import { Renderer } from "./render.js";
 import { Inspector } from "./inspector.js";
 import { ListView } from "./list.js";
+import { deriveSchema } from "./schema.js";
 
 const SEED = `# nDMindMap: Welcome
 
@@ -57,6 +58,7 @@ toolbar.innerHTML = `
   <button id="link" title="Link the selected node to another (typed relationship) — or press L">+ Link</button>
   <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
   <label class="ndmm-toggle"><input type="checkbox" id="list" checked> List</label>
+  <label class="ndmm-toggle"><input type="checkbox" id="schema"> Schema</label>
   <label class="ndmm-toggle"><input type="checkbox" id="grid"> Grid</label>
   <span class="ndmm-bindgroup" title="Bind a visual channel to a dimension (global attribution); unbound = aesthetic">
     Bind:
@@ -83,7 +85,10 @@ filters.style.display = "none";
 const lintBanner = document.createElement("div");
 lintBanner.className = "ndmm-lint";
 lintBanner.style.display = "none";
-stage.append(legend, filters, lintBanner);
+const schemaPanel = document.createElement("div");
+schemaPanel.className = "ndmm-schema";
+schemaPanel.style.display = "none";
+stage.append(legend, filters, lintBanner, schemaPanel);
 
 const status = toolbar.querySelector<HTMLSpanElement>("#status")!;
 status.textContent = IDLE_HINT;
@@ -122,7 +127,74 @@ function refreshUI(): void {
   refreshBindingUI();
   refreshFilters();
   refreshLint();
+  refreshSchema();
   list.render(doc.graph, selectedNodeId);
+}
+
+/** Emergent schema view — node kinds + edge domain/range, derived from the sketch. */
+function refreshSchema(): void {
+  if (schemaPanel.style.display === "none") return;
+  const schema = deriveSchema(doc.graph);
+  schemaPanel.replaceChildren();
+
+  const head = document.createElement("div");
+  head.className = "ndmm-schema-head";
+  head.textContent = "Emergent schema";
+  const sub = document.createElement("span");
+  sub.className = "ndmm-schema-sub";
+  sub.textContent = "derived from the sketch — kind = type, else level";
+  head.append(sub);
+  schemaPanel.append(head);
+
+  // Node kinds.
+  const kindsTitle = document.createElement("div");
+  kindsTitle.className = "ndmm-schema-section";
+  kindsTitle.textContent = "Node kinds";
+  schemaPanel.append(kindsTitle);
+  for (const k of schema.kinds) {
+    const row = document.createElement("div");
+    row.className = "ndmm-schema-kind";
+    const name = document.createElement("span");
+    name.className = "ndmm-schema-kind-name" + (k.fromType ? " is-type" : "");
+    name.textContent = k.kind;
+    const count = document.createElement("span");
+    count.className = "ndmm-schema-count";
+    count.textContent = `×${k.count}`;
+    row.append(name, count);
+    if (k.dimensions.length) {
+      const dims = document.createElement("span");
+      dims.className = "ndmm-schema-dims";
+      dims.textContent = k.dimensions.join(" · ");
+      row.append(dims);
+    }
+    schemaPanel.append(row);
+  }
+
+  // Edge patterns (domain → range).
+  const patTitle = document.createElement("div");
+  patTitle.className = "ndmm-schema-section";
+  patTitle.textContent = "Relations (domain → range)";
+  schemaPanel.append(patTitle);
+  if (!schema.patterns.length) {
+    const none = document.createElement("div");
+    none.className = "ndmm-schema-empty";
+    none.textContent = "no edges yet";
+    schemaPanel.append(none);
+  }
+  for (const p of schema.patterns) {
+    const row = document.createElement("div");
+    row.className = "ndmm-schema-pattern";
+    row.innerHTML =
+      `<span class="ndmm-schema-dom">${escapeHtml(p.domain)}</span>` +
+      `<span class="ndmm-schema-rel">--${escapeHtml(p.relation)}--&gt;</span>` +
+      `<span class="ndmm-schema-ran">${escapeHtml(p.range)}</span>` +
+      `<span class="ndmm-schema-count">×${p.count}</span>`;
+    schemaPanel.append(row);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 }
 
 /** Category-error banner — a click jumps to the first offending edge. */
@@ -308,6 +380,11 @@ toolbar.querySelector<HTMLInputElement>("#grid")!.addEventListener("change", (e)
 toolbar.querySelector<HTMLInputElement>("#list")!.addEventListener("change", (e) => {
   list.setVisible((e.target as HTMLInputElement).checked);
   if (list.visible) list.render(doc.graph, selectedNodeId);
+});
+
+toolbar.querySelector<HTMLInputElement>("#schema")!.addEventListener("change", (e) => {
+  schemaPanel.style.display = (e.target as HTMLInputElement).checked ? "block" : "none";
+  refreshSchema();
 });
 
 toolbar.querySelector("#export")!.addEventListener("click", () => {
