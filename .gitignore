@@ -17,3 +17,7 @@ dist/
 
 # Working docs (personal backlog, not shipped)
 BACKLOG.md
+
+# Obsidian program-management layer (vault-only, not shipped)
+notes/
+🚀 *.md
