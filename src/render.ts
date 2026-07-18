@@ -628,15 +628,30 @@ export class Renderer {
     let moved = false;
     let offX = 0;
     let offY = 0;
+    // Double-click-to-edit is detected here on `pointerdown`, not via the native
+    // `dblclick`/`click` events: selecting a node redraws and `replaceChildren()`
+    // removes the pointer target before `pointerup`, so the browser fires neither
+    // `click` nor `dblclick`. Two pointerdowns on the same node, though, do arrive.
+    let lastDownId: string | null = null;
+    let lastDownTime = 0;
+    const DOUBLE_MS = 400;
 
     this.svg.addEventListener("pointerdown", (e) => {
       this.host.focus(); // stage owns the keyboard while focused
       if (this.linkingFrom) return; // click handler completes/cancels the link
       if ((e.target as Element).closest("[data-edge-id]")) return; // edge → let click select it
       const target = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
-      if (!target?.dataset.id) { this.select(null); return; }
+      if (!target?.dataset.id) { this.select(null); lastDownId = null; return; }
       const n = this.graph.nodes.get(target.dataset.id);
       if (!n) return;
+      // Second press on the same node within the window → edit its label (F2).
+      if (lastDownId === n.id && e.timeStamp - lastDownTime < DOUBLE_MS) {
+        lastDownId = null;
+        this.startEdit(n.id);
+        return; // don't arm a drag
+      }
+      lastDownId = n.id;
+      lastDownTime = e.timeStamp;
       dragging = n.id;
       moved = false;
       this.select(n.id);
@@ -674,14 +689,9 @@ export class Renderer {
     this.svg.addEventListener("pointerup", end);
     this.svg.addEventListener("pointercancel", end);
 
-    this.svg.addEventListener("dblclick", (e) => {
-      const target = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
-      if (target?.dataset.id) this.startEdit(target.dataset.id);
-    });
-
-    // Selection also on `click` — pointerdown drives drag, but not every input
-    // path (some automation / assistive tech) emits pointer events, whereas click
-    // is universal. Idempotent with the pointerdown selection above.
+    // Selection also on `click` — pointerdown drives drag + double-click, but not
+    // every input path (some automation / assistive tech) emits pointer events,
+    // whereas click is universal. Idempotent with the pointerdown selection above.
     this.svg.addEventListener("click", (e) => {
       this.host.focus();
       const nodeEl = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
