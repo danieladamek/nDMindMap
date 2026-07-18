@@ -162,6 +162,13 @@ body {
 /* Link mode: crosshair while choosing a target */
 .ndmm-stage.is-linking .ndmm-canvas { cursor: crosshair; }
 
+/* Re-parent drag (dragging a child-of connector onto a new parent) */
+.ndmm-tree-hit { cursor: grab; }
+.ndmm-reparent-line { stroke: var(--accent); stroke-width: 2.2; stroke-dasharray: 5 4; pointer-events: none; }
+.ndmm-node.is-drop-target rect,
+.ndmm-node.is-drop-target ellipse,
+.ndmm-node.is-drop-target polygon { stroke: var(--accent); stroke-width: 3; fill: color-mix(in srgb, var(--accent) 16%, var(--node)); }
+
 /* Nodes */
 .ndmm-node rect {
   fill: var(--node); stroke: var(--node-stroke); stroke-width: 1.5; cursor: grab;

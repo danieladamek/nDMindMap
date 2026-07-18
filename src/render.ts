@@ -678,10 +678,32 @@ export class Renderer {
     let lastDownId: string | null = null;
     let lastDownTime = 0;
     const DOUBLE_MS = 400;
+    // Re-parent gesture: grab a child-of connector and drag its child onto a new
+    // parent. A press without a drag still falls through to selecting the edge.
+    let reparent: { childId: string; edgeId: string } | null = null;
+    let reparentMoved = false;
+    let rpStartX = 0, rpStartY = 0;
+    let rubber: SVGLineElement | null = null;
+    let dropTarget: SVGGElement | null = null;
+    const clearDrop = () => { dropTarget?.classList.remove("is-drop-target"); dropTarget = null; };
 
     this.svg.addEventListener("pointerdown", (e) => {
       this.host.focus(); // stage owns the keyboard while focused
       if (this.linkingFrom) return; // click handler completes/cancels the link
+      // Child-of connector → arm a re-parent drag (checked before the generic
+      // edge bail-out below, since tree edges also carry data-edge-id).
+      const treeEdge = (e.target as Element).closest(".ndmm-tree-edge-g") as SVGGElement | null;
+      if (treeEdge?.dataset.edgeId) {
+        const edge = this.graph.edges.get(treeEdge.dataset.edgeId);
+        if (edge && edge.relation === CHILD_OF) {
+          reparent = { childId: edge.source, edgeId: edge.id };
+          reparentMoved = false;
+          rpStartX = e.clientX; rpStartY = e.clientY;
+          this.svg.setPointerCapture(e.pointerId);
+          e.preventDefault();
+          return;
+        }
+      }
       if ((e.target as Element).closest("[data-edge-id]")) return; // edge → let click select it
       const target = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
       if (!target?.dataset.id) { this.select(null); lastDownId = null; return; }
@@ -709,6 +731,33 @@ export class Renderer {
     });
 
     this.svg.addEventListener("pointermove", (e) => {
+      if (reparent) {
+        if (!reparentMoved && Math.hypot(e.clientX - rpStartX, e.clientY - rpStartY) < 4) return;
+        reparentMoved = true;
+        const child = this.graph.nodes.get(reparent.childId);
+        if (!child) return;
+        const pt = this.toLocal(e);
+        if (!rubber) {
+          rubber = document.createElementNS(SVG_NS, "line");
+          rubber.setAttribute("class", "ndmm-reparent-line");
+          rubber.style.pointerEvents = "none"; // never intercept elementFromPoint hit-testing
+          this.svg.append(rubber); // above the layers; not cleared by draw()
+        }
+        const cx = (child.x ?? 0) + this.nodeWidth(child) / 2;
+        rubber.setAttribute("x1", String(cx));
+        rubber.setAttribute("y1", String(child.y ?? 0));
+        rubber.setAttribute("x2", String(pt.x));
+        rubber.setAttribute("y2", String(pt.y));
+        // Highlight a valid drop target (not the child itself or its descendants).
+        const el = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest(".ndmm-node") as SVGGElement | null;
+        const id = el?.dataset.id;
+        const valid = !!id && id !== reparent.childId && !this.graph.isDescendant(id, reparent.childId);
+        if (el !== dropTarget) {
+          clearDrop();
+          if (valid && el) { dropTarget = el; el.classList.add("is-drop-target"); }
+        }
+        return;
+      }
       if (!dragging) return;
       const n = this.graph.nodes.get(dragging);
       if (!n) return;
@@ -727,6 +776,27 @@ export class Renderer {
     });
 
     const end = (e: PointerEvent) => {
+      if (reparent) {
+        this.svg.releasePointerCapture(e.pointerId);
+        rubber?.remove(); rubber = null;
+        clearDrop();
+        const r = reparent;
+        reparent = null;
+        if (!reparentMoved) { this.selectEdge(r.edgeId); return; } // a press without a drag = select
+        const el = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest(".ndmm-node") as SVGGElement | null;
+        const targetId = el?.dataset.id;
+        if (targetId && targetId !== r.childId && !this.graph.isDescendant(targetId, r.childId)) {
+          try {
+            this.graph.setParent(r.childId, targetId);
+            this.changed();
+            this.relayout();
+            this.select(r.childId);
+          } catch { this.relayout(); }
+        } else {
+          this.relayout(); // invalid drop → snap back
+        }
+        return;
+      }
       if (dragging) {
         this.svg.releasePointerCapture(e.pointerId);
         if (moved) this.changed();
