@@ -4,10 +4,11 @@
  * A document already has structure: headings nest, bullets nest, paragraphs sit
  * under a heading. We turn that into an nDMindMap:
  *   - headings & bullets  → child-of tree (the document outline),
- *   - paragraphs          → nodes labelled `Sec1.2.3` with the prose in `note`,
+ *   - paragraphs (prose)  → folded into the nearest heading's `note` (the node's
+ *     content), NOT a node per paragraph — the map is the outline, not the text,
  *   - every structural node carries a `sec` attribute (its outline number),
  *   - `@[label]` inside a block → a **part-of** edge from that entity to the
- *     block's section (matching an existing node by label or `SecN`, else
+ *     heading it sits under (matching an existing node by label or `SecN`, else
  *     creating one). Distinct from the interrogation modal's `mentions`.
  *
  * Everything hangs under a single document root so a whole import stays groupable
@@ -19,8 +20,8 @@ import type { Graph, GraphNode } from "./model.js";
 export const PART_OF = "part-of";
 const LINK_RE = /@\[([^\]]+)\]/g;
 
-/** `kind` marks a node's document role (heading / bullet / section / entity). */
-export type BlockKind = "document" | "heading" | "bullet" | "section" | "entity";
+/** `kind` marks a node's document role (heading / bullet / entity). */
+export type BlockKind = "document" | "heading" | "bullet" | "entity";
 
 export interface ExplodeResult {
   rootId: string;
@@ -62,14 +63,21 @@ export function explodeInto(graph: Graph, text: string, title?: string): Explode
   let bulletStack: { indent: number; node: GraphNode }[] = [];
   const currentHeading = (): GraphNode => (headingStack.length ? headingStack[headingStack.length - 1].node : root);
 
+  const appendNote = (node: GraphNode, text: string): void => {
+    const prev = typeof node.attrs.note === "string" ? node.attrs.note : "";
+    node.attrs.note = prev ? `${prev}\n\n${text}` : text;
+  };
+
   let para: string[] = [];
   const flushPara = (): void => {
     const body = para.join("\n").trim();
     para = [];
     if (!body) return;
-    const node = graph.addNode({ label: "", attrs: { kind: "section", note: body } });
-    graph.setParent(node.id, currentHeading().id);
-    blocks.push({ node, source: body });
+    // Prose is a heading's *content*: fold it into the nearest heading's note
+    // (or the document root's) rather than spawning a node per paragraph.
+    const container = currentHeading();
+    appendNote(container, body);
+    blocks.push({ node: container, source: body });
     bulletStack = []; // a paragraph breaks any open bullet list
   };
 
@@ -110,13 +118,12 @@ export function explodeInto(graph: Graph, text: string, title?: string): Explode
   flushPara();
 
   // Outline numbers: DFS from the doc root's children. Each node's `sec` is its
-  // path of 1-based sibling indices ("1", "1.2", "1.2.3"). Section (paragraph)
-  // nodes, which have no title, are labelled `SecN`.
+  // path of 1-based sibling indices ("1", "1.2", "1.2.3"), for reference and for
+  // resolving `@[Sec1.2]` mentions.
   const numberChildren = (parentId: string, prefix: string): void => {
     graph.childrenOf(parentId).forEach((child, i) => {
       const sec = prefix ? `${prefix}.${i + 1}` : `${i + 1}`;
       child.attrs.sec = sec;
-      if (child.attrs.kind === "section" && !child.label) child.label = `Sec${sec}`;
       numberChildren(child.id, sec);
     });
   };
