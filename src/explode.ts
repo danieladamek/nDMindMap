@@ -4,12 +4,14 @@
  * A document already has structure: headings nest, bullets nest, paragraphs sit
  * under a heading. We turn that into an nDMindMap:
  *   - headings & bullets  → child-of tree (the document outline),
- *   - paragraphs (prose)  → folded into the nearest heading's `note` (the node's
- *     content), NOT a node per paragraph — the map is the outline, not the text,
+ *   - paragraphs (prose)  → a node **labelled with its first sentence**, full
+ *     prose in `note` (default). Set `paragraphsAsNodes: false` to instead fold
+ *     prose into the nearest heading's note (a lean outline with no prose nodes),
  *   - every structural node carries a `sec` attribute (its outline number),
  *   - `@[label]` inside a block → a **part-of** edge from that entity to the
- *     heading it sits under (matching an existing node by label or `SecN`, else
- *     creating one). Distinct from the interrogation modal's `mentions`.
+ *     paragraph/heading it sits under (matching an existing node by label or
+ *     `SecN`, else creating one). Distinct from the interrogation modal's
+ *     `mentions`.
  *
  * Everything hangs under a single document root so a whole import stays groupable
  * and collapsible. Pure graph mutation; no I/O, no new dependencies.
@@ -20,8 +22,15 @@ import type { Graph, GraphNode } from "./model.js";
 export const PART_OF = "part-of";
 const LINK_RE = /@\[([^\]]+)\]/g;
 
-/** `kind` marks a node's document role (heading / bullet / entity). */
-export type BlockKind = "document" | "heading" | "bullet" | "entity";
+/** `kind` marks a node's document role (heading / bullet / section / entity). */
+export type BlockKind = "document" | "heading" | "bullet" | "section" | "entity";
+
+export interface ExplodeOptions {
+  /** true (default): each paragraph becomes a node labelled with its first
+   *  sentence, full prose in `note`. false: prose folds into the nearest
+   *  heading's note (lean outline). */
+  paragraphsAsNodes?: boolean;
+}
 
 export interface ExplodeResult {
   rootId: string;
@@ -32,6 +41,15 @@ export interface ExplodeResult {
 /** Strip `@[x]` markup down to `x` for a clean on-map label. */
 function cleanLabel(text: string): string {
   return text.replace(LINK_RE, "$1").trim();
+}
+
+/** A short, readable label for a paragraph: its first sentence, truncated. */
+function summarize(text: string): string {
+  const clean = cleanLabel(text).replace(/\s+/g, " ").trim();
+  const m = clean.match(/^(.*?[.!?])(?:\s|$)/);
+  let s = (m ? m[1] : clean).trim();
+  if (s.length > 64) s = s.slice(0, 61).trimEnd() + "…";
+  return s || "note";
 }
 
 /** First `# Heading` text in the document, if any. */
@@ -47,7 +65,8 @@ function firstHeading(text: string): string | null {
  * Parse `text` and add the exploded structure into `graph`. Returns the new
  * document root id plus counts. `title` overrides the derived document label.
  */
-export function explodeInto(graph: Graph, text: string, title?: string): ExplodeResult {
+export function explodeInto(graph: Graph, text: string, title?: string, opts: ExplodeOptions = {}): ExplodeResult {
+  const paragraphsAsNodes = opts.paragraphsAsNodes ?? true;
   const startSize = graph.nodes.size;
   const derived = title || firstHeading(text);
   const docLabel = (derived || "Imported document").trim();
@@ -73,12 +92,18 @@ export function explodeInto(graph: Graph, text: string, title?: string): Explode
     const body = para.join("\n").trim();
     para = [];
     if (!body) return;
-    // Prose is a heading's *content*: fold it into the nearest heading's note
-    // (or the document root's) rather than spawning a node per paragraph.
-    const container = currentHeading();
-    appendNote(container, body);
-    blocks.push({ node: container, source: body });
     bulletStack = []; // a paragraph breaks any open bullet list
+    if (paragraphsAsNodes) {
+      // A paragraph → a node labelled with its first sentence, full prose in note.
+      const node = graph.addNode({ label: summarize(body), attrs: { kind: "section", note: body } });
+      graph.setParent(node.id, currentHeading().id);
+      blocks.push({ node, source: body });
+    } else {
+      // Lean outline: fold prose into the nearest heading's (or root's) note.
+      const container = currentHeading();
+      appendNote(container, body);
+      blocks.push({ node: container, source: body });
+    }
   };
 
   for (const raw of text.split(/\r?\n/)) {

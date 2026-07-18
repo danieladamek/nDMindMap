@@ -20,7 +20,7 @@ import type { LiveEditor } from "./live.js";
 
 export interface ReaderCallbacks {
   /** Build a map from the (possibly annotated) document text. */
-  onExplode: (text: string, title: string) => void;
+  onExplode: (text: string, title: string, paragraphsAsNodes: boolean) => void;
 }
 
 type Mode = "read" | "live" | "source";
@@ -31,6 +31,7 @@ export class ReaderModal {
   private readPane!: HTMLElement;
   private liveHost!: HTMLElement;
   private titleInput!: HTMLInputElement;
+  private splitToggle!: HTMLInputElement;
   private modeButtons: Record<Mode, HTMLButtonElement> = {} as Record<Mode, HTMLButtonElement>;
   private mode: Mode = "source";
   private live: LiveEditor | null = null; // lazily mounted on first Live use
@@ -159,6 +160,13 @@ export class ReaderModal {
     hint.textContent = "select a word, then Make node";
     const spacer = document.createElement("span");
     spacer.className = "ndmm-reader-spacer";
+    const splitLabel = document.createElement("label");
+    splitLabel.className = "ndmm-reader-split";
+    splitLabel.title = "On: each paragraph becomes a node (labelled by its first sentence). Off: prose folds into the heading's note (lean outline).";
+    this.splitToggle = document.createElement("input");
+    this.splitToggle.type = "checkbox";
+    this.splitToggle.checked = true;
+    splitLabel.append(this.splitToggle, document.createTextNode(" Split paragraphs"));
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "ndmm-reader-cancel";
@@ -169,7 +177,7 @@ export class ReaderModal {
     explode.className = "ndmm-reader-explode";
     explode.textContent = "💥 Explode into map";
     explode.addEventListener("click", () => this.explode());
-    actions.append(makeNode, hint, spacer, cancel, explode);
+    actions.append(makeNode, hint, spacer, splitLabel, cancel, explode);
 
     panel.append(head, src, panes, actions);
     this.overlay.append(panel);
@@ -245,7 +253,7 @@ export class ReaderModal {
     this.syncFromLive();
     const text = this.textarea.value.trim();
     if (!text) { void this.setMode("source"); this.textarea.focus(); return; }
-    this.cb.onExplode(text, this.titleInput.value.trim());
+    this.cb.onExplode(text, this.titleInput.value.trim(), this.splitToggle.checked);
     this.close();
   }
 }

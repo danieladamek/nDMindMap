@@ -161,8 +161,8 @@ function interrogate(target: GraphNode | GraphEdge): void {
 
 // Explosion Reader — load/paste a document and explode it into a map.
 const reader = new ReaderModal(app, {
-  onExplode: (text, title) => {
-    const result = explodeInto(doc.graph, text, title || undefined);
+  onExplode: (text, title, paragraphsAsNodes) => {
+    const result = explodeInto(doc.graph, text, title || undefined, { paragraphsAsNodes });
     renderer.relayout();
     renderer.selectNode(result.rootId);
     refreshUI();
