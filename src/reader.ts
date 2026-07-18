@@ -16,21 +16,24 @@
  */
 
 import { renderMarkdown } from "./markdown.js";
+import type { LiveEditor } from "./live.js";
 
 export interface ReaderCallbacks {
   /** Build a map from the (possibly annotated) document text. */
   onExplode: (text: string, title: string) => void;
 }
 
-type Mode = "read" | "source";
+type Mode = "read" | "live" | "source";
 
 export class ReaderModal {
   private overlay: HTMLElement;
   private textarea!: HTMLTextAreaElement;
   private readPane!: HTMLElement;
+  private liveHost!: HTMLElement;
   private titleInput!: HTMLInputElement;
   private modeButtons: Record<Mode, HTMLButtonElement> = {} as Record<Mode, HTMLButtonElement>;
   private mode: Mode = "source";
+  private live: LiveEditor | null = null; // lazily mounted on first Live use
 
   constructor(host: HTMLElement, private cb: ReaderCallbacks) {
     this.overlay = document.createElement("div");
@@ -48,12 +51,17 @@ export class ReaderModal {
 
   open(): void {
     this.overlay.style.display = "flex";
-    this.setMode(this.textarea.value.trim() ? this.mode : "source");
-    queueMicrotask(() => { if (this.mode === "source") this.textarea.focus(); });
+    void this.setMode(this.textarea.value.trim() ? this.mode : "source");
   }
 
   close(): void {
+    this.syncFromLive();
     this.overlay.style.display = "none";
+  }
+
+  /** The canonical document text is the textarea; pull the latest from Live. */
+  private syncFromLive(): void {
+    if (this.live && this.mode === "live") this.textarea.value = this.live.getDoc();
   }
 
   private build(): void {
@@ -85,12 +93,18 @@ export class ReaderModal {
 
     const seg = document.createElement("div");
     seg.className = "ndmm-reader-modes";
-    (["read", "source"] as Mode[]).forEach((m) => {
+    const MODE_LABEL: Record<Mode, string> = { read: "Read", live: "Live", source: "Source" };
+    const MODE_TIP: Record<Mode, string> = {
+      read: "Clean rendered view",
+      live: "Obsidian-style live preview — rendered, raw revealed on the caret's line",
+      source: "Raw markdown — edit & annotate",
+    };
+    (["read", "live", "source"] as Mode[]).forEach((m) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.textContent = m === "read" ? "Read" : "Source";
-      b.title = m === "read" ? "Clean rendered view" : "Raw markdown — edit & annotate";
-      b.addEventListener("click", () => this.setMode(m));
+      b.textContent = MODE_LABEL[m];
+      b.title = MODE_TIP[m];
+      b.addEventListener("click", () => { void this.setMode(m); });
       this.modeButtons[m] = b;
       seg.append(b);
     });
@@ -118,6 +132,10 @@ export class ReaderModal {
     this.readPane = document.createElement("article");
     this.readPane.className = "ndmm-md ndmm-reader-read";
 
+    this.liveHost = document.createElement("div");
+    this.liveHost.className = "ndmm-reader-live";
+    this.liveHost.style.display = "none";
+
     this.textarea = document.createElement("textarea");
     this.textarea.className = "ndmm-reader-text";
     this.textarea.placeholder =
@@ -125,7 +143,7 @@ export class ReaderModal {
       "# Headings and\n- nested bullets\nbecome the outline; paragraphs become Sec1.2.3 nodes.\n\n" +
       "Wrap an entity in @[Label] (or select it and press “Make node”) to link it — those become part-of connections.";
 
-    panes.append(this.readPane, this.textarea);
+    panes.append(this.readPane, this.liveHost, this.textarea);
 
     // Actions.
     const actions = document.createElement("div");
@@ -157,14 +175,28 @@ export class ReaderModal {
     this.overlay.append(panel);
   }
 
-  private setMode(m: Mode): void {
+  private async setMode(m: Mode): Promise<void> {
+    this.syncFromLive(); // capture Live edits before switching away
     this.mode = m;
-    for (const key of ["read", "source"] as Mode[]) this.modeButtons[key].classList.toggle("is-active", key === m);
-    const read = m === "read";
-    if (read) this.readPane.innerHTML = renderMarkdown(this.textarea.value);
-    this.readPane.style.display = read ? "block" : "none";
-    this.textarea.style.display = read ? "none" : "block";
-    if (!read) queueMicrotask(() => this.textarea.focus());
+    for (const key of ["read", "live", "source"] as Mode[]) this.modeButtons[key].classList.toggle("is-active", key === m);
+
+    if (m === "live") await this.ensureLive();
+    if (m === "live" && this.live) this.live.setDoc(this.textarea.value);
+    if (m === "read") this.readPane.innerHTML = renderMarkdown(this.textarea.value);
+
+    this.readPane.style.display = m === "read" ? "block" : "none";
+    this.liveHost.style.display = m === "live" ? "block" : "none";
+    this.textarea.style.display = m === "source" ? "block" : "none";
+
+    if (m === "source") queueMicrotask(() => this.textarea.focus());
+    else if (m === "live") queueMicrotask(() => this.live?.focus());
+  }
+
+  /** Lazy-load CodeMirror + the live-preview editor on first Live use. */
+  private async ensureLive(): Promise<void> {
+    if (this.live) return;
+    const { mountLive } = await import("./live.js");
+    this.live = mountLive(this.liveHost, this.textarea.value, (text) => { this.textarea.value = text; });
   }
 
   private openFile(): void {
@@ -178,13 +210,17 @@ export class ReaderModal {
       if (!this.titleInput.value.trim()) {
         this.titleInput.value = file.name.replace(/\.(md|markdown|txt)$/i, "");
       }
-      this.setMode("read"); // show the freshly-loaded document rendered
+      void this.setMode("read"); // show the freshly-loaded document rendered
     });
     input.click();
   }
 
   /** Wrap the current selection in `@[…]`, in whichever view is active. */
   private makeNodeFromSelection(): void {
+    if (this.mode === "live" && this.live) {
+      this.live.wrapSelection("@[", "]"); // Live's onChange keeps the textarea synced
+      return;
+    }
     if (this.mode === "source") {
       const ta = this.textarea;
       const { selectionStart: a, selectionEnd: b, value } = ta;
@@ -206,8 +242,9 @@ export class ReaderModal {
   }
 
   private explode(): void {
+    this.syncFromLive();
     const text = this.textarea.value.trim();
-    if (!text) { this.setMode("source"); this.textarea.focus(); return; }
+    if (!text) { void this.setMode("source"); this.textarea.focus(); return; }
     this.cb.onExplode(text, this.titleInput.value.trim());
     this.close();
   }
