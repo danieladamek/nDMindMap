@@ -15,6 +15,8 @@ import { Inspector } from "./inspector.js";
 import { ListView } from "./list.js";
 import { deriveSchema } from "./schema.js";
 import { InterrogationModal } from "./interrogate.js";
+import { ReaderModal } from "./reader.js";
+import { explodeInto } from "./explode.js";
 import type { DeleteImpact } from "./render.js";
 import type { GraphNode, GraphEdge } from "./model.js";
 
@@ -64,6 +66,7 @@ toolbar.innerHTML = `
     <button id="file-saveas" title="Save As… (⌘/Ctrl-Shift-S)">Save As</button>
     <span id="filename" class="ndmm-filename"></span>
   </span>
+  <button id="reader" title="Explode a document (paste or .md/.txt) into a map">📖 Read</button>
   <button id="add" title="Add a root node">+ Root</button>
   <button id="link" title="Link the selected node to another (typed relationship) — or press L">+ Link</button>
   <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
@@ -155,6 +158,19 @@ function interrogate(target: GraphNode | GraphEdge): void {
   if ("relation" in target) modal.openEdge(target);
   else modal.openNode(target);
 }
+
+// Explosion Reader — load/paste a document and explode it into a map.
+const reader = new ReaderModal(app, {
+  onExplode: (text, title) => {
+    const result = explodeInto(doc.graph, text, title || undefined);
+    renderer.relayout();
+    renderer.selectNode(result.rootId);
+    refreshUI();
+    const nn = result.nodes === 1 ? "node" : "nodes";
+    const ee = result.edges === 1 ? "link" : "links";
+    status.textContent = `exploded into ${result.nodes} ${nn} · ${result.edges} part-of ${ee}`;
+  },
+});
 
 // --- confirmation dialog ----------------------------------------------------
 
@@ -714,6 +730,7 @@ toolbar.querySelector("#file-new")!.addEventListener("click", () => void newFile
 toolbar.querySelector("#file-open")!.addEventListener("click", () => void openFile());
 toolbar.querySelector("#file-save")!.addEventListener("click", () => void saveFile());
 toolbar.querySelector("#file-saveas")!.addEventListener("click", () => void saveAsFile());
+toolbar.querySelector("#reader")!.addEventListener("click", () => reader.open());
 
 // ⌘/Ctrl-S save, ⌘/Ctrl-Shift-S save-as (work regardless of focus);
 // ⌘/Ctrl-Z undo, ⌘/Ctrl-Shift-Z (or Ctrl-Y) redo — skipped while a text field
@@ -757,5 +774,6 @@ toolbar.querySelector<HTMLInputElement>("#schema")!.addEventListener("change", (
   undo,
   redo,
   history: () => ({ undo: undoStack.length, redo: redoStack.length }),
+  explode: (text: string) => { const r = explodeInto(doc.graph, text); renderer.relayout(); refreshUI(); return r; },
   Graph,
 };
