@@ -16,7 +16,7 @@ import { ListView } from "./list.js";
 import { deriveSchema } from "./schema.js";
 import { InterrogationModal } from "./interrogate.js";
 import { ReaderModal } from "./reader.js";
-import { explodeInto, projectDocument, clearDocument } from "./explode.js";
+import { explodeInto, syncDocument, projectDocument } from "./explode.js";
 import type { DeleteImpact } from "./render.js";
 import type { GraphNode, GraphEdge } from "./model.js";
 
@@ -166,8 +166,9 @@ function interrogate(target: GraphNode | GraphEdge): void {
 const reader = new ReaderModal(app, {
   onExplode: (text, title, paragraphsAsNodes, docId) => {
     const syncing = docId !== null && doc.graph.nodes.has(docId);
-    if (syncing) clearDocument(doc.graph, docId!);
-    const result = explodeInto(doc.graph, text, title || undefined, { paragraphsAsNodes });
+    const result = syncing
+      ? syncDocument(doc.graph, docId!, text, { paragraphsAsNodes }) // reconcile in place
+      : explodeInto(doc.graph, text, title || undefined, { paragraphsAsNodes });
     renderer.relayout();
     renderer.selectNode(result.rootId);
     refreshUI();
