@@ -439,3 +439,56 @@ body {
   border: none; border-radius: 7px; padding: 8px 16px; cursor: pointer;
 }
 .ndmm-reader-explode:hover { filter: brightness(1.08); }
+
+/* Reader: Read/Source segmented control (adapted from GrandsTech Reader) */
+.ndmm-reader-modes { display: inline-flex; border: 1px solid var(--node-stroke); border-radius: 8px; overflow: hidden; }
+.ndmm-reader-modes button {
+  font: inherit; font-size: 13px; color: var(--text); background: transparent;
+  border: none; border-right: 1px solid var(--node-stroke); padding: 6px 14px; cursor: pointer;
+}
+.ndmm-reader-modes button:last-child { border-right: none; }
+.ndmm-reader-modes button.is-active { background: var(--accent); color: #fff; }
+
+/* Reader panes: rendered Read view + raw Source textarea (one shown at a time) */
+.ndmm-reader-panes { display: flex; flex-direction: column; min-height: 340px; }
+.ndmm-reader-read { max-height: 58vh; overflow-y: auto; }
+
+/* Rendered-markdown reading column (github-ish, but themed) */
+.ndmm-md {
+  box-sizing: border-box; width: 100%; max-width: 760px; margin: 0 auto; padding: 18px 26px 40px;
+  font-size: 15px; line-height: 1.65; color: var(--text);
+  background: var(--node); border: 1px solid var(--node-stroke); border-radius: 9px;
+}
+.ndmm-md h1, .ndmm-md h2, .ndmm-md h3, .ndmm-md h4, .ndmm-md h5, .ndmm-md h6 {
+  margin: 1.4em 0 0.5em; line-height: 1.3; font-weight: 700;
+}
+.ndmm-md h1:first-child, .ndmm-md h2:first-child, .ndmm-md h3:first-child { margin-top: 0.2em; }
+.ndmm-md h1 { font-size: 1.7em; padding-bottom: 0.25em; border-bottom: 1px solid var(--node-stroke); }
+.ndmm-md h2 { font-size: 1.35em; padding-bottom: 0.2em; border-bottom: 1px solid var(--node-stroke); }
+.ndmm-md h3 { font-size: 1.15em; }
+.ndmm-md h4, .ndmm-md h5, .ndmm-md h6 { font-size: 1em; color: var(--muted); }
+.ndmm-md p { margin: 0.7em 0; }
+.ndmm-md ul, .ndmm-md ol { margin: 0.5em 0; padding-left: 1.6em; }
+.ndmm-md li { margin: 0.2em 0; }
+.ndmm-md blockquote {
+  margin: 0.8em 0; padding: 0.2em 0 0.2em 1em; color: var(--muted);
+  border-left: 3px solid var(--node-stroke);
+}
+.ndmm-md hr { border: none; border-top: 1px solid var(--node-stroke); margin: 1.4em 0; }
+.ndmm-md a { color: var(--accent); text-decoration: none; }
+.ndmm-md a:hover { text-decoration: underline; }
+.ndmm-md code {
+  font: 0.88em ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 0.1em 0.35em; border-radius: 4px;
+}
+.ndmm-md pre {
+  background: var(--bg); border: 1px solid var(--node-stroke); border-radius: 7px;
+  padding: 10px 12px; overflow-x: auto; margin: 0.8em 0;
+}
+.ndmm-md pre code { background: none; padding: 0; font-size: 0.85em; }
+/* @[label] link tokens, highlighted so you see future part-of connections */
+.ndmm-md-link {
+  font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--crosslink); background: color-mix(in srgb, var(--crosslink) 14%, transparent);
+  padding: 0.05em 0.35em; border-radius: 4px; white-space: nowrap;
+}

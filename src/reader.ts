@@ -1,23 +1,36 @@
 /**
  * Explosion Reader modal (Phase 1) — load or paste a text/markdown document,
- * lightly annotate it, and "explode" it into a hierarchical map (see explode.ts).
+ * read it in a clean rendered view, lightly annotate it, and "explode" it into a
+ * hierarchical map (see explode.ts).
  *
- * Annotation here is deliberately minimal: select a word or phrase and press
- * "Make node" to wrap it in `@[…]` — so you build links without typing the
- * notation. The actual nodes/edges are created when you Explode.
+ * The Read / Source model is adapted from the GrandsTech Reader (native macOS
+ * app): **Read** is a rendered, GitHub-style reading column; **Source** is the
+ * raw markdown you edit and annotate. (The GrandsTech Reader's Live/Rich modes
+ * ride on CodeMirror/ProseMirror — out of scope for this lean tool.)
+ *
+ * Annotation is deliberately minimal: select a word or phrase in either view and
+ * press "Make node" to wrap it in `@[…]` — so you build links without typing the
+ * notation. Nodes/edges are created when you Explode.
  *
  * Phase 2 (deferred): PDF/DOCX ingest and the parallel capture sidebar.
  */
+
+import { renderMarkdown } from "./markdown.js";
 
 export interface ReaderCallbacks {
   /** Build a map from the (possibly annotated) document text. */
   onExplode: (text: string, title: string) => void;
 }
 
+type Mode = "read" | "source";
+
 export class ReaderModal {
   private overlay: HTMLElement;
   private textarea!: HTMLTextAreaElement;
+  private readPane!: HTMLElement;
   private titleInput!: HTMLInputElement;
+  private modeButtons: Record<Mode, HTMLButtonElement> = {} as Record<Mode, HTMLButtonElement>;
+  private mode: Mode = "source";
 
   constructor(host: HTMLElement, private cb: ReaderCallbacks) {
     this.overlay = document.createElement("div");
@@ -35,7 +48,8 @@ export class ReaderModal {
 
   open(): void {
     this.overlay.style.display = "flex";
-    queueMicrotask(() => this.textarea.focus());
+    this.setMode(this.textarea.value.trim() ? this.mode : "source");
+    queueMicrotask(() => { if (this.mode === "source") this.textarea.focus(); });
   }
 
   close(): void {
@@ -65,14 +79,28 @@ export class ReaderModal {
     close.addEventListener("click", () => this.close());
     head.append(left, close);
 
-    // Source row: open a file, and a document-title field.
+    // Source row: mode toggle, open a file, and a document-title field.
     const src = document.createElement("div");
     src.className = "ndmm-reader-src";
+
+    const seg = document.createElement("div");
+    seg.className = "ndmm-reader-modes";
+    (["read", "source"] as Mode[]).forEach((m) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = m === "read" ? "Read" : "Source";
+      b.title = m === "read" ? "Clean rendered view" : "Raw markdown — edit & annotate";
+      b.addEventListener("click", () => this.setMode(m));
+      this.modeButtons[m] = b;
+      seg.append(b);
+    });
+
     const openBtn = document.createElement("button");
     openBtn.type = "button";
     openBtn.className = "ndmm-reader-open";
     openBtn.textContent = "Open .md / .txt…";
     openBtn.addEventListener("click", () => this.openFile());
+
     const titleField = document.createElement("label");
     titleField.className = "ndmm-reader-title";
     titleField.append("Title ");
@@ -80,15 +108,24 @@ export class ReaderModal {
     this.titleInput.className = "insp-input";
     this.titleInput.placeholder = "defaults to the first heading";
     titleField.append(this.titleInput);
-    src.append(openBtn, titleField);
 
-    // The document text.
+    src.append(seg, openBtn, titleField);
+
+    // Panes: the rendered Read view and the raw Source textarea (one shown).
+    const panes = document.createElement("div");
+    panes.className = "ndmm-reader-panes";
+
+    this.readPane = document.createElement("article");
+    this.readPane.className = "ndmm-md ndmm-reader-read";
+
     this.textarea = document.createElement("textarea");
     this.textarea.className = "ndmm-reader-text";
     this.textarea.placeholder =
       "Paste a document, or Open a file.\n\n" +
       "# Headings and\n- nested bullets\nbecome the outline; paragraphs become Sec1.2.3 nodes.\n\n" +
       "Wrap an entity in @[Label] (or select it and press “Make node”) to link it — those become part-of connections.";
+
+    panes.append(this.readPane, this.textarea);
 
     // Actions.
     const actions = document.createElement("div");
@@ -116,8 +153,18 @@ export class ReaderModal {
     explode.addEventListener("click", () => this.explode());
     actions.append(makeNode, hint, spacer, cancel, explode);
 
-    panel.append(head, src, this.textarea, actions);
+    panel.append(head, src, panes, actions);
     this.overlay.append(panel);
+  }
+
+  private setMode(m: Mode): void {
+    this.mode = m;
+    for (const key of ["read", "source"] as Mode[]) this.modeButtons[key].classList.toggle("is-active", key === m);
+    const read = m === "read";
+    if (read) this.readPane.innerHTML = renderMarkdown(this.textarea.value);
+    this.readPane.style.display = read ? "block" : "none";
+    this.textarea.style.display = read ? "none" : "block";
+    if (!read) queueMicrotask(() => this.textarea.focus());
   }
 
   private openFile(): void {
@@ -131,31 +178,36 @@ export class ReaderModal {
       if (!this.titleInput.value.trim()) {
         this.titleInput.value = file.name.replace(/\.(md|markdown|txt)$/i, "");
       }
-      this.textarea.focus();
+      this.setMode("read"); // show the freshly-loaded document rendered
     });
     input.click();
   }
 
-  /** Wrap the current textarea selection in `@[…]`. */
+  /** Wrap the current selection in `@[…]`, in whichever view is active. */
   private makeNodeFromSelection(): void {
-    const ta = this.textarea;
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    if (start === end) { ta.focus(); return; } // nothing selected
-    const sel = ta.value.slice(start, end).trim();
-    if (!sel) { ta.focus(); return; }
-    const before = ta.value.slice(0, start);
-    const after = ta.value.slice(end);
-    const wrapped = `@[${sel}]`;
-    ta.value = before + wrapped + after;
-    // Re-select the inserted token so repeated words are easy to see.
-    ta.focus();
-    ta.setSelectionRange(start, start + wrapped.length);
+    if (this.mode === "source") {
+      const ta = this.textarea;
+      const { selectionStart: a, selectionEnd: b, value } = ta;
+      const sel = value.slice(a, b).trim();
+      if (!sel) { ta.focus(); return; }
+      const wrapped = `@[${sel}]`;
+      ta.value = value.slice(0, a) + wrapped + value.slice(b);
+      ta.focus();
+      ta.setSelectionRange(a, a + wrapped.length);
+      return;
+    }
+    // Read mode: wrap the first occurrence of the selected text in the source.
+    const sel = (window.getSelection()?.toString() ?? "").trim();
+    if (!sel) return;
+    const idx = this.textarea.value.indexOf(sel);
+    if (idx === -1) return;
+    this.textarea.value = this.textarea.value.slice(0, idx) + `@[${sel}]` + this.textarea.value.slice(idx + sel.length);
+    this.readPane.innerHTML = renderMarkdown(this.textarea.value); // reflect the new link chip
   }
 
   private explode(): void {
     const text = this.textarea.value.trim();
-    if (!text) { this.textarea.focus(); return; }
+    if (!text) { this.setMode("source"); this.textarea.focus(); return; }
     this.cb.onExplode(text, this.titleInput.value.trim());
     this.close();
   }
