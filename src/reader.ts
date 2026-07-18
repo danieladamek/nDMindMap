@@ -18,12 +18,30 @@
 import { renderMarkdown } from "./markdown.js";
 import type { LiveEditor } from "./live.js";
 
+/** One row in the link sidebar (a node; `children` are child-of + linked items). */
+export interface SidebarItem {
+  id: string;
+  label: string;
+  kind: string;
+  sec?: string;
+  linked?: boolean; // reached via a part-of link (not a structural child)
+  children: SidebarItem[];
+}
+export interface SidebarData {
+  external: SidebarItem[]; // roots outside the paper-derived graph
+  sections: SidebarItem[]; // the document outline + linked items
+}
+
 export interface ReaderCallbacks {
   /** Explode (docId null) or re-sync (docId set) the document into the map.
    *  Returns the document's root id, which the reader keeps as the active doc. */
   onExplode: (text: string, title: string, paragraphsAsNodes: boolean, docId: string | null) => string;
   /** The current markdown projection of a document, or null if it's gone. */
   projection: (docId: string) => string | null;
+  /** The link-sidebar model for a document. */
+  sidebar: (docId: string) => SidebarData;
+  /** Select a node on the map (from a sidebar click). */
+  onSelect: (nodeId: string) => void;
 }
 
 type Mode = "read" | "live" | "source";
@@ -35,6 +53,7 @@ export class ReaderModal {
   private liveHost!: HTMLElement;
   private titleInput!: HTMLInputElement;
   private splitToggle!: HTMLInputElement;
+  private sidebarEl!: HTMLElement;
   private modeButtons: Record<Mode, HTMLButtonElement> = {} as Record<Mode, HTMLButtonElement>;
   private mode: Mode = "source";
   private live: LiveEditor | null = null; // lazily mounted on first Live use
@@ -65,6 +84,7 @@ export class ReaderModal {
       else this.currentDocId = null; // the document was deleted
     }
     this.refreshActions();
+    this.renderSidebar();
     this.overlay.style.display = "flex";
     void this.setMode(this.textarea.value.trim() && this.currentDocId ? "read" : this.mode);
   }
@@ -156,6 +176,7 @@ export class ReaderModal {
       this.textarea.value = "";
       this.titleInput.value = "";
       this.refreshActions();
+      this.renderSidebar();
       void this.setMode("source");
     });
 
@@ -189,6 +210,15 @@ export class ReaderModal {
 
     panes.append(this.readPane, this.liveHost, this.textarea);
 
+    // Link sidebar (right column): external items + the document outline.
+    this.sidebarEl = document.createElement("aside");
+    this.sidebarEl.className = "ndmm-reader-sidebar";
+
+    // Body: text panes (left) + link sidebar (right).
+    const body = document.createElement("div");
+    body.className = "ndmm-reader-body";
+    body.append(panes, this.sidebarEl);
+
     // Actions.
     const actions = document.createElement("div");
     actions.className = "ndmm-reader-actions";
@@ -213,7 +243,7 @@ export class ReaderModal {
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "ndmm-reader-cancel";
-    cancel.textContent = "Cancel";
+    cancel.textContent = "Close";
     cancel.addEventListener("click", () => this.close());
     this.explodeBtn = document.createElement("button");
     this.explodeBtn.type = "button";
@@ -222,8 +252,70 @@ export class ReaderModal {
     this.explodeBtn.addEventListener("click", () => this.explode());
     actions.append(makeNode, hint, spacer, splitLabel, cancel, this.explodeBtn);
 
-    panel.append(head, src, panes, actions);
+    panel.append(head, src, body, actions);
     this.overlay.append(panel);
+  }
+
+  // --- link sidebar ---------------------------------------------------------
+
+  /** Rebuild the right-bar: external items + the document outline with links. */
+  private renderSidebar(): void {
+    this.sidebarEl.replaceChildren();
+    if (!this.currentDocId) { this.sidebarEl.style.display = "none"; return; }
+    this.sidebarEl.style.display = "";
+    const data = this.cb.sidebar(this.currentDocId);
+
+    const zone = (title: string, sub: string, items: SidebarItem[], emptyText: string): HTMLElement => {
+      const z = document.createElement("div");
+      z.className = "ndmm-sb-zone";
+      const h = document.createElement("div");
+      h.className = "ndmm-sb-head";
+      h.textContent = title;
+      const s = document.createElement("div");
+      s.className = "ndmm-sb-sub";
+      s.textContent = sub;
+      z.append(h, s);
+      if (!items.length) {
+        const e = document.createElement("div");
+        e.className = "ndmm-sb-empty";
+        e.textContent = emptyText;
+        z.append(e);
+      } else {
+        for (const it of items) this.appendItem(z, it, 0);
+      }
+      return z;
+    };
+
+    this.sidebarEl.append(
+      zone("External items", "not embedded in the text", data.external, "none yet"),
+      zone("Sections", "outline + linked items", data.sections, "explode a document to populate"),
+    );
+  }
+
+  private appendItem(container: HTMLElement, item: SidebarItem, depth: number): void {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "ndmm-sb-item" + (item.linked ? " is-linked" : "");
+    row.style.paddingLeft = `${8 + depth * 14}px`;
+    if (item.sec) {
+      const sec = document.createElement("span");
+      sec.className = "ndmm-sb-sec";
+      sec.textContent = item.sec;
+      row.append(sec);
+    }
+    const label = document.createElement("span");
+    label.className = "ndmm-sb-label";
+    label.textContent = item.label || "(unnamed)";
+    row.append(label);
+    if (item.linked || item.kind === "entity") {
+      const tag = document.createElement("span");
+      tag.className = "ndmm-sb-tag";
+      tag.textContent = "link";
+      row.append(tag);
+    }
+    row.addEventListener("click", () => this.cb.onSelect(item.id));
+    container.append(row);
+    for (const c of item.children) this.appendItem(container, c, depth + 1);
   }
 
   private async setMode(m: Mode): Promise<void> {
@@ -297,7 +389,9 @@ export class ReaderModal {
     const text = this.textarea.value.trim();
     if (!text) { void this.setMode("source"); this.textarea.focus(); return; }
     // Explode a new document, or sync edits back into the active one (no dup).
+    // Stay open so the link sidebar reflects the result and you keep editing.
     this.currentDocId = this.cb.onExplode(text, this.titleInput.value.trim(), this.splitToggle.checked, this.currentDocId);
-    this.close();
+    this.refreshActions();
+    this.renderSidebar();
   }
 }

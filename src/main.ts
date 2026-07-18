@@ -15,7 +15,7 @@ import { Inspector } from "./inspector.js";
 import { ListView } from "./list.js";
 import { deriveSchema } from "./schema.js";
 import { InterrogationModal } from "./interrogate.js";
-import { ReaderModal } from "./reader.js";
+import { ReaderModal, type SidebarItem, type SidebarData } from "./reader.js";
 import { explodeInto, syncDocument, projectDocument } from "./explode.js";
 import type { DeleteImpact } from "./render.js";
 import type { GraphNode, GraphEdge } from "./model.js";
@@ -179,7 +179,42 @@ const reader = new ReaderModal(app, {
     return result.rootId;
   },
   projection: (docId) => (doc.graph.nodes.has(docId) ? projectDocument(doc.graph, docId) : null),
+  sidebar: (docId) => buildSidebar(docId),
+  onSelect: (nodeId) => { renderer.selectNode(nodeId); },
 });
+
+/** The link-sidebar model: external roots + the document outline with linked
+ *  (part-of) items woven in as children. A shared `seen` set keeps it a tree. */
+function buildSidebar(docId: string): SidebarData {
+  const g = doc.graph;
+  const root = g.nodes.get(docId);
+  const inDoc = new Set<string>();
+  if (root) { const collect = (id: string) => { inDoc.add(id); for (const c of g.childrenOf(id)) collect(c.id); }; collect(docId); }
+
+  const seen = new Set<string>();
+  const toItem = (id: string, linked: boolean): SidebarItem | null => {
+    const n = g.nodes.get(id);
+    if (!n || seen.has(id)) return null;
+    seen.add(id);
+    const children: SidebarItem[] = [];
+    for (const c of g.childrenOf(id)) { const it = toItem(c.id, false); if (it) children.push(it); }
+    // Items linked *into* this node via part-of (the @[links]) become children.
+    for (const e of g.edges.values()) {
+      if (e.relation === "part-of" && e.target === id) { const it = toItem(e.source, true); if (it) children.push(it); }
+    }
+    return { id, label: n.label, kind: typeof n.attrs.kind === "string" ? n.attrs.kind : "", sec: typeof n.attrs.sec === "string" ? n.attrs.sec : undefined, linked, children };
+  };
+
+  const sections: SidebarItem[] = [];
+  if (root) for (const c of g.childrenOf(root.id)) { const it = toItem(c.id, false); if (it) sections.push(it); }
+  const external: SidebarItem[] = [];
+  for (const n of g.roots()) {
+    if (inDoc.has(n.id) || n.attrs.kind === "entity" || seen.has(n.id)) continue;
+    const it = toItem(n.id, false);
+    if (it) external.push(it);
+  }
+  return { external, sections };
+}
 
 // --- confirmation dialog ----------------------------------------------------
 
