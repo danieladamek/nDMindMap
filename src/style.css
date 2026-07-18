@@ -377,3 +377,18 @@ body {
 }
 .ndmm-modal-prose:focus { border-color: var(--accent); }
 .ndmm-modal-hint { font-size: 11px; color: var(--muted); line-height: 1.4; }
+
+/* Confirmation dialog (delete warning, etc.) */
+.ndmm-confirm { width: min(460px, 92vw); gap: 14px; }
+.ndmm-confirm-title { font-size: 17px; font-weight: 700; color: var(--text); }
+.ndmm-confirm-body { font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+.ndmm-confirm-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 2px; }
+.ndmm-confirm-cancel, .ndmm-confirm-ok {
+  font: inherit; font-size: 13px; border-radius: 7px; padding: 8px 16px; cursor: pointer;
+}
+.ndmm-confirm-cancel { color: var(--text); background: var(--node); border: 1px solid var(--node-stroke); }
+.ndmm-confirm-cancel:hover { border-color: var(--accent); }
+.ndmm-confirm-ok { color: #fff; background: var(--accent); border: 1px solid transparent; font-weight: 600; }
+.ndmm-confirm-ok.is-danger { background: var(--danger); }
+.ndmm-confirm-ok:hover { filter: brightness(1.08); }
+.ndmm-confirm-ok:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }

@@ -26,6 +26,15 @@ const NODE_H = 34;
 const PAD_X = 14;
 const MIN_W = 54;
 
+/** What deleting a node's subtree would cost — shown in the delete warning. */
+export interface DeleteImpact {
+  rootLabel: string;
+  nodes: number; // total nodes removed (root + descendants)
+  descendants: number; // nodes - 1
+  connections: number; // total edges removed
+  severed: number; // typed (non child-of) links to nodes that will survive
+}
+
 export interface RendererOptions {
   onSelect?: (node: GraphNode | null) => void;
   onSelectEdge?: (edge: GraphEdge | null) => void;
@@ -33,6 +42,8 @@ export interface RendererOptions {
   onChange?: () => void;
   /** Open the interrogation modal on the selected node or edge (the `I` key). */
   onInterrogate?: (target: GraphNode | GraphEdge) => void;
+  /** Confirm a non-trivial subtree delete; resolve false to cancel. */
+  confirmDelete?: (impact: DeleteImpact) => Promise<boolean>;
   gridSize?: number;
 }
 
@@ -433,12 +444,44 @@ export class Renderer {
     return root;
   }
 
-  private deleteSelected(): void {
-    if (!this.selectedId) return;
-    const parent = this.graph.parentOf(this.selectedId);
+  /** Nodes and edges a subtree delete of `id` would remove. */
+  private deleteImpact(id: string): DeleteImpact {
+    const subtree = new Set<string>();
+    const walk = (nid: string) => { subtree.add(nid); for (const c of this.graph.childrenOf(nid)) walk(c.id); };
+    walk(id);
+    let connections = 0, severed = 0;
+    for (const e of this.graph.edges.values()) {
+      const sIn = subtree.has(e.source), tIn = subtree.has(e.target);
+      if (!sIn && !tIn) continue;
+      connections++;
+      // A typed relationship from inside the subtree to a surviving node is a
+      // "breakage" worth flagging (the child-of link to the parent is expected).
+      if (sIn !== tIn && e.relation !== CHILD_OF) severed++;
+    }
+    return {
+      rootLabel: this.graph.nodes.get(id)?.label || id,
+      nodes: subtree.size,
+      descendants: subtree.size - 1,
+      connections,
+      severed,
+    };
+  }
+
+  private async deleteSelected(): Promise<void> {
+    const id = this.selectedId;
+    if (!id) return;
+    const impact = this.deleteImpact(id);
+    // Warn before anything but a lone, unconnected leaf — and show the blast radius.
+    const nonTrivial = impact.descendants > 0 || impact.severed > 0 || impact.connections > 1;
+    if (nonTrivial && this.opts.confirmDelete) {
+      const ok = await this.opts.confirmDelete(impact);
+      if (!ok) return;
+      if (this.selectedId !== id || !this.graph.nodes.has(id)) return; // changed during confirm
+    }
+    const parent = this.graph.parentOf(id);
     const siblings = parent ? this.graph.childrenOf(parent.id) : this.graph.roots();
-    const idx = siblings.findIndex((s) => s.id === this.selectedId);
-    this.graph.removeSubtree(this.selectedId);
+    const idx = siblings.findIndex((s) => s.id === id);
+    this.graph.removeSubtree(id);
     this.changed();
     const next = parent ?? siblings[idx + 1] ?? siblings[idx - 1] ?? this.graph.roots()[0] ?? null;
     this.relayout();
@@ -577,7 +620,7 @@ export class Renderer {
         case "Backspace":
           e.preventDefault();
           if (this.selectedEdgeId) this.deleteEdge(this.selectedEdgeId);
-          else this.deleteSelected();
+          else void this.deleteSelected();
           break;
         case "ArrowLeft": {
           e.preventDefault();

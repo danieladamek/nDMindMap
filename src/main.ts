@@ -15,6 +15,7 @@ import { Inspector } from "./inspector.js";
 import { ListView } from "./list.js";
 import { deriveSchema } from "./schema.js";
 import { InterrogationModal } from "./interrogate.js";
+import type { DeleteImpact } from "./render.js";
 import type { GraphNode, GraphEdge } from "./model.js";
 
 const SEED = `# nDMindMap: Welcome
@@ -148,6 +149,67 @@ const modal = new InterrogationModal(app, {
 function interrogate(target: GraphNode | GraphEdge): void {
   if ("relation" in target) modal.openEdge(target);
   else modal.openNode(target);
+}
+
+// --- confirmation dialog ----------------------------------------------------
+
+/** A modal yes/no dialog. Resolves true on confirm, false on cancel/Esc/backdrop. */
+function confirmDialog(opts: { title: string; body: string; confirmLabel: string; danger?: boolean }): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "ndmm-modal-overlay";
+    const panel = document.createElement("div");
+    panel.className = "ndmm-modal ndmm-confirm";
+    const title = document.createElement("div");
+    title.className = "ndmm-confirm-title";
+    title.textContent = opts.title;
+    const body = document.createElement("div");
+    body.className = "ndmm-confirm-body";
+    body.textContent = opts.body;
+    const actions = document.createElement("div");
+    actions.className = "ndmm-confirm-actions";
+    const cancel = document.createElement("button");
+    cancel.className = "ndmm-confirm-cancel";
+    cancel.textContent = "Cancel";
+    const ok = document.createElement("button");
+    ok.className = "ndmm-confirm-ok" + (opts.danger ? " is-danger" : "");
+    ok.textContent = opts.confirmLabel;
+
+    const close = (v: boolean) => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey, true);
+      resolve(v);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(false); }
+      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); close(true); }
+    };
+    cancel.addEventListener("click", () => close(false));
+    ok.addEventListener("click", () => close(true));
+    overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) close(false); });
+    document.addEventListener("keydown", onKey, true);
+
+    actions.append(cancel, ok);
+    panel.append(title, body, actions);
+    overlay.append(panel);
+    app.append(overlay);
+    queueMicrotask(() => ok.focus());
+  });
+}
+
+/** Human-readable blast radius for a subtree delete. */
+function deleteMessage(i: DeleteImpact): string {
+  const nodeWord = i.nodes === 1 ? "node" : "nodes";
+  let head = i.descendants > 0
+    ? `Removes ${i.nodes} ${nodeWord} — this one plus ${i.descendants} descendant${i.descendants === 1 ? "" : "s"}`
+    : `Removes this node`;
+  if (i.connections > 0) head += ` and ${i.connections} connection${i.connections === 1 ? "" : "s"}`;
+  head += ".";
+  if (i.severed > 0) {
+    head += ` This severs ${i.severed} relationship${i.severed === 1 ? "" : "s"} to ${i.severed === 1 ? "a node" : "nodes"} that will remain.`;
+  }
+  head += " You can undo this (⌘/Ctrl-Z).";
+  return head;
 }
 
 /** One refresh for everything that mirrors graph state (bind UI, legend, list). */
@@ -436,6 +498,12 @@ function mount(graph: Graph): Renderer {
   modal.setGraph(graph);
   return new Renderer(stage, graph, {
     onInterrogate: (t) => interrogate(t),
+    confirmDelete: (impact) => confirmDialog({
+      title: `Delete “${impact.rootLabel || "(unnamed)"}”?`,
+      body: deleteMessage(impact),
+      confirmLabel: "Delete",
+      danger: true,
+    }),
     onSelect: (n) => {
       selectedNodeId = n?.id ?? null;
       status.textContent = n
