@@ -2,12 +2,16 @@
  * Interrogation modal — a focused, single-element view for *thinking inside* one
  * node or one relationship. Unlike the inspector (which edits structured fields),
  * this is a broad freeform space: brainstorm prose, link to other nodes inline
- * with `[[label]]` (Obsidian-style), traverse the graph by clicking connections,
+ * with `@[label]` (mention-style), traverse the graph by clicking connections,
  * and — for an edge — set its directionality.
  *
  * The prose lives on the element's reserved `note` attr (persisted in the file's
- * `## Notes` section). `[[label]]` tokens resolve to `mentions` edges on commit
+ * `## Notes` section). `@[label]` tokens resolve to `mentions` edges on commit
  * (node focus only; per the brief, an edge's prose doesn't spawn graph objects).
+ * We deliberately do NOT use `[[label]]`: these files can live in an Obsidian
+ * vault, where `[[ ]]` are wikilinks and our map nodes (which aren't notes) would
+ * pollute the graph with ghost links. `[[ ]]` is left untouched — reserved for
+ * genuine links to real Obsidian notes once we ship the plugin.
  * Directionality is the reserved `dir` edge attr (`both` = bidirectional).
  */
 
@@ -26,7 +30,9 @@ export interface InterrogationCallbacks {
 
 type Focus = { kind: "node"; node: GraphNode } | { kind: "edge"; edge: GraphEdge };
 
-const LINK_RE = /\[\[([^\]]+)\]\]/g;
+// `@[Label]` — mention-style intra-map link. Chosen over `[[Label]]` so the
+// `.ndmm.md` file never trips Obsidian's wikilink indexer (see the header note).
+const LINK_RE = /@\[([^\]]+)\]/g;
 
 export class InterrogationModal {
   private overlay: HTMLElement;
@@ -81,7 +87,7 @@ export class InterrogationModal {
     this.overlay.style.display = "none";
   }
 
-  /** Persist the current prose and resolve its [[links]] (node focus only). */
+  /** Persist the current prose and resolve its @[links] (node focus only). */
   private commit(): void {
     if (!this.focus || !this.graph) return;
     if (this.focus.kind === "node") this.resolveLinks(this.focus.node);
@@ -167,7 +173,7 @@ export class InterrogationModal {
     if (!conns.length) {
       const none = document.createElement("div");
       none.className = "ndmm-modal-empty";
-      none.textContent = "no connections yet — add one with a [[link]] below";
+      none.textContent = "no connections yet — add one with an @[link] below";
       connWrap.append(none);
     }
     for (const e of conns) {
@@ -193,8 +199,8 @@ export class InterrogationModal {
     }
     this.panel.append(connWrap);
 
-    // Freeform prose with inline [[ ]] linking.
-    this.panel.append(this.prose(node, "Brainstorm freely. Type [[Some label]] to link this node to another (a new node is created if the label is unknown)."));
+    // Freeform prose with inline @[ ] linking.
+    this.panel.append(this.prose(node, "Brainstorm freely. Type @[Some label] to link this node to another (a new node is created if the label is unknown)."));
   }
 
   private renderEdge(edge: GraphEdge): void {
@@ -247,7 +253,7 @@ export class InterrogationModal {
     dirWrap.append(dirRow);
     this.panel.append(dirWrap);
 
-    // Freeform prose (no [[ ]] graph effects on an edge, per the brief).
+    // Freeform prose (no @[ ] graph effects on an edge, per the brief).
     this.panel.append(this.prose(edge, "Freewrite about this relationship — why it holds, caveats, evidence."));
   }
 
