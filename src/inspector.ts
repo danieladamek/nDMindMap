@@ -86,14 +86,23 @@ export class Inspector {
     }
   }
 
-  private field(label: string): HTMLElement {
+  private field(label: string, tip?: string): HTMLElement {
     const wrap = document.createElement("label");
     wrap.className = "insp-field";
     const span = document.createElement("span");
     span.className = "insp-label";
     span.textContent = label;
+    if (tip) span.title = tip;
     wrap.append(span);
     return wrap;
+  }
+
+  /** A small caption under a field, explaining what it's for. */
+  private help(text: string): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "insp-help";
+    el.textContent = text;
+    return el;
   }
 
   private render(): void {
@@ -110,7 +119,7 @@ export class Inspector {
     labelField.append(labelInput);
 
     // Type — a combobox over registered node types, with a Promote action.
-    const typeField = this.field("Type");
+    const typeField = this.field("Type", "What kind of thing this node is");
     const typeInput = document.createElement("input");
     typeInput.className = "insp-input";
     typeInput.placeholder = "e.g. concept, biomarker…";
@@ -149,9 +158,10 @@ export class Inspector {
       this.edited();
     });
     typeField.append(typeInput, datalist, promote);
+    typeField.append(this.help("The kind of thing this node is (concept, biomarker, DSM diagnosis…). Promote to reuse it as a global type with default styling."));
 
     // Abstraction level — the "kind" dimension the interrogation payoff rests on.
-    const levelField = this.field("Abstraction level");
+    const levelField = this.field("Abstraction level", "How abstract / what layer of reality this sits on");
     const levelInput = document.createElement("input");
     levelInput.className = "insp-input";
     levelInput.placeholder = "e.g. subjective-experience, biomarker…";
@@ -171,11 +181,13 @@ export class Inspector {
       this.edited();
     });
     levelField.append(levelInput, levelList);
+    levelField.append(this.help("How abstract the node is — e.g. subjective experience vs. biomarker vs. molecular entity. Lets the lint flag edges that collapse a level crossing into identity."));
 
     // Shape
-    const shapeField = this.field("Shape");
+    const shapeField = this.field("Shape", "Node outline. Overridden when a channel is bound to a dimension.");
     const shapeSel = document.createElement("select");
     shapeSel.className = "insp-input";
+    shapeSel.title = "Node outline shape";
     for (const s of SHAPES) {
       const o = document.createElement("option");
       o.value = s.value; o.textContent = s.label;
@@ -189,7 +201,7 @@ export class Inspector {
     shapeField.append(shapeSel);
 
     // Color swatches
-    const colorField = this.field("Color");
+    const colorField = this.field("Color", "Fill colour. Overridden when a channel is bound to a dimension.");
     const swatches = document.createElement("div");
     swatches.className = "insp-swatches";
     const current = nodeColor(n);
@@ -209,15 +221,17 @@ export class Inspector {
     colorField.append(swatches);
 
     // Size segmented
-    const sizeField = this.field("Size");
+    const sizeField = this.field("Size", "Node size (S / M / L). Overridden when a channel is bound to a dimension.");
     const seg = document.createElement("div");
     seg.className = "insp-segment";
     const curSize = nodeSizeKey(n);
+    const SIZE_TITLES: Record<string, string> = { s: "Small", m: "Medium", l: "Large" };
     (Object.keys(SIZES) as (keyof typeof SIZES)[]).forEach((k) => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "insp-seg-btn" + (k === curSize ? " is-active" : "");
       b.textContent = k.toUpperCase();
+      b.title = SIZE_TITLES[k] ?? k;
       b.addEventListener("click", () => {
         if (k === "m") delete n.attrs.size; else n.attrs.size = k;
         this.edited();

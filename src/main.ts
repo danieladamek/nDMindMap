@@ -57,17 +57,17 @@ toolbar.innerHTML = `
   <button id="add" title="Add a root node">+ Root</button>
   <button id="link" title="Link the selected node to another (typed relationship) — or press L">+ Link</button>
   <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
-  <label class="ndmm-toggle"><input type="checkbox" id="list" checked> List</label>
-  <label class="ndmm-toggle"><input type="checkbox" id="schema"> Schema</label>
-  <label class="ndmm-toggle"><input type="checkbox" id="grid"> Grid</label>
+  <label class="ndmm-toggle" title="Show the outline / list view beside the map"><input type="checkbox" id="list" checked> List</label>
+  <label class="ndmm-toggle" title="Show the emergent schema derived from the sketch (node kinds + relation domain→range)"><input type="checkbox" id="schema"> Schema</label>
+  <label class="ndmm-toggle" title="Toggle a snap-to grid for hand placement"><input type="checkbox" id="grid"> Grid</label>
   <span class="ndmm-bindgroup" title="Bind a visual channel to a dimension (global attribution); unbound = aesthetic">
     Bind:
     <label>color <select id="bind-color" class="ndmm-bind"></select></label>
     <label>shape <select id="bind-shape" class="ndmm-bind"></select></label>
     <label>size <select id="bind-size" class="ndmm-bind"></select></label>
   </span>
-  <button id="export">Export</button>
-  <button id="import">Import</button>
+  <button id="export" title="Download this map as a .ndmm.md file">Export</button>
+  <button id="import" title="Load a .ndmm.md file, replacing the current map">Import</button>
   <span class="spacer"></span>
   <span class="hint" id="status"></span>
 `;
@@ -362,7 +362,7 @@ refreshUI();
 
 toolbar.querySelector("#add")!.addEventListener("click", () => {
   renderer.focusCanvas();
-  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  renderer.createRoot();
 });
 
 toolbar.querySelector("#link")!.addEventListener("click", () => {

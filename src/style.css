@@ -147,8 +147,11 @@ body {
 
 /* Edges */
 .ndmm-edge { stroke: var(--edge); stroke-width: 1.6; fill: none; }
-.ndmm-crosslink { stroke: var(--crosslink); stroke-width: 1.4; stroke-dasharray: 4 3; opacity: 0.85; }
-.ndmm-crosslink-hit { stroke: transparent; stroke-width: 14; cursor: pointer; }
+/* Tree (child-of) connectors — selectable: delete = make root, retype = dimension. */
+.ndmm-tree-hit { stroke: transparent; stroke-width: 14; fill: none; cursor: pointer; }
+.ndmm-tree-edge-g.is-selected .ndmm-edge { stroke: var(--node-selected); stroke-width: 2.8; }
+.ndmm-crosslink { stroke: var(--crosslink); stroke-width: 1.4; stroke-dasharray: 4 3; opacity: 0.85; fill: none; }
+.ndmm-crosslink-hit { stroke: transparent; stroke-width: 14; fill: none; cursor: pointer; }
 .ndmm-crosslink-g.is-selected .ndmm-crosslink { stroke-width: 2.6; opacity: 1; stroke-dasharray: none; }
 .ndmm-crosslink-g.is-selected .ndmm-edge-label { fill: var(--crosslink); font-weight: 600; }
 .ndmm-edge-label { fill: var(--edge-label); font-size: 10px; text-anchor: middle; user-select: none; }
@@ -183,6 +186,7 @@ body {
 .insp-empty { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; }
 .insp-field { display: flex; flex-direction: column; gap: 5px; }
 .insp-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.insp-help { font-size: 10.5px; line-height: 1.4; color: var(--muted); opacity: 0.85; margin-top: 1px; }
 .insp-input {
   font: inherit; font-size: 13px; color: var(--text); background: var(--node);
   border: 1px solid var(--node-stroke); border-radius: 6px; padding: 6px 8px; width: 100%;

@@ -163,7 +163,20 @@ export class Renderer {
     this.edgeLayer.replaceChildren();
     this.nodeLayer.replaceChildren();
 
-    // Edges: child-of as smooth connectors, others as dashed cross-links.
+    // Cross-links sharing a node pair are fanned apart so their lines and labels
+    // don't stack (a single edge stays straight). Group first, then index within.
+    const pairGroups = new Map<string, string[]>();
+    for (const e of this.graph.edges.values()) {
+      if (e.relation === CHILD_OF) continue;
+      const key = [e.source, e.target].slice().sort().join("::");
+      const g = pairGroups.get(key) ?? [];
+      g.push(e.id);
+      pairGroups.set(key, g);
+    }
+
+    // Edges: child-of as smooth connectors, others as dashed cross-links. Both
+    // are now selectable (a tree connector opens the edge editor, where deleting
+    // it makes the child a root and retyping it converts it into a dimension).
     for (const e of this.graph.edges.values()) {
       const a = this.graph.nodes.get(e.source);
       const b = this.graph.nodes.get(e.target);
@@ -176,29 +189,59 @@ export class Renderer {
         const cx = a.x ?? 0;
         const cy = a.y ?? 0;
         const mid = (px + cx) / 2;
+        const d = `M ${px} ${py} C ${mid} ${py}, ${mid} ${cy}, ${cx} ${cy}`;
+        const cg = document.createElementNS(SVG_NS, "g");
+        cg.setAttribute("class", "ndmm-tree-edge-g" + (e.id === this.selectedEdgeId ? " is-selected" : ""));
+        cg.dataset.edgeId = e.id;
+        const hit = document.createElementNS(SVG_NS, "path");
+        hit.setAttribute("d", d);
+        hit.setAttribute("class", "ndmm-tree-hit");
+        cg.append(hit);
         const path = document.createElementNS(SVG_NS, "path");
-        path.setAttribute("d", `M ${px} ${py} C ${mid} ${py}, ${mid} ${cy}, ${cx} ${cy}`);
+        path.setAttribute("d", d);
         path.setAttribute("class", "ndmm-edge");
-        this.edgeLayer.append(path);
+        cg.append(path);
+        this.edgeLayer.append(cg);
       } else {
         if (this.hiddenRelations.has(e.relation)) continue; // filtered dimension
         const ax = (a.x ?? 0) + this.nodeWidth(a) / 2;
+        const ay = a.y ?? 0;
         const bx = (b.x ?? 0) + this.nodeWidth(b) / 2;
-        const mx = (ax + bx) / 2;
-        const my = ((a.y ?? 0) + (b.y ?? 0)) / 2;
+        const by = b.y ?? 0;
+
+        // Fan-out: offset the curve's apex perpendicular to the line by this
+        // edge's slot in its node-pair group. One edge → offset 0 → straight.
+        const key = [e.source, e.target].slice().sort().join("::");
+        const group = pairGroups.get(key) ?? [e.id];
+        const idx = group.indexOf(e.id);
+        const dx = bx - ax, dy = by - ay;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len, ny = dx / len; // unit normal
+        const off = (idx - (group.length - 1) / 2) * 26;
+        // Quadratic control at 2× the apex offset so the curve peaks at its middle.
+        const cxq = (ax + bx) / 2 + nx * off * 2;
+        const cyq = (ay + by) / 2 + ny * off * 2;
+        const d = `M ${ax} ${ay} Q ${cxq} ${cyq} ${bx} ${by}`;
+        // Stagger each sibling edge's label *along* its curve (different t) so a
+        // stack of relations on one short edge reads instead of overprinting.
+        const t = (idx + 1) / (group.length + 1);
+        const mt = 1 - t;
+        const mx = mt * mt * ax + 2 * mt * t * cxq + t * t * bx;
+        const my = mt * mt * ay + 2 * mt * t * cyq + t * t * by;
+
         const cg = document.createElementNS(SVG_NS, "g");
         const warned = warnedEdges.has(e.id);
         cg.setAttribute("class", "ndmm-crosslink-g" + (e.id === this.selectedEdgeId ? " is-selected" : "") + (warned ? " is-warning" : ""));
         cg.dataset.edgeId = e.id;
 
-        // Wide transparent hit line so a thin dashed edge is easy to click.
-        const hit = document.createElementNS(SVG_NS, "line");
-        for (const [k, v] of [["x1", ax], ["y1", a.y], ["x2", bx], ["y2", b.y]] as const) hit.setAttribute(k, String(v));
+        // Wide transparent hit path so a thin dashed edge is easy to click.
+        const hit = document.createElementNS(SVG_NS, "path");
+        hit.setAttribute("d", d);
         hit.setAttribute("class", "ndmm-crosslink-hit");
         cg.append(hit);
 
-        const line = document.createElementNS(SVG_NS, "line");
-        for (const [k, v] of [["x1", ax], ["y1", a.y], ["x2", bx], ["y2", b.y]] as const) line.setAttribute(k, String(v));
+        const line = document.createElementNS(SVG_NS, "path");
+        line.setAttribute("d", d);
         line.setAttribute("class", "ndmm-crosslink");
         cg.append(line);
 
@@ -437,18 +480,25 @@ export class Renderer {
 
   private bindEditor(): void {
     this.editor.addEventListener("keydown", (e) => {
+      // These keys are fully handled here; stop them bubbling to the stage's
+      // key handler, which would otherwise re-fire once `commitEdit` clears the
+      // `editing` guard (a single Return would both commit *and* make a sibling).
       if (e.key === "Enter" && !e.shiftKey) {
+        // Return just *commits* the label and drops back to the selected node.
+        // A second Return (canvas-focused) is what creates a sibling — so you
+        // can finish a label without spawning an empty node you didn't want.
         e.preventDefault();
-        const id = this.selectedId;
+        e.stopPropagation();
         this.commitEdit();
-        if (id) this.addSibling(id);
       } else if (e.key === "Tab") {
         e.preventDefault();
+        e.stopPropagation();
         const id = this.selectedId;
         this.commitEdit();
         if (id) this.addChild(id);
       } else if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         this.cancelEdit();
       }
     });
@@ -518,7 +568,10 @@ export class Renderer {
     });
   }
 
-  private createRoot(): void {
+  /** Create a new, unparented root node and start editing it. Public so the
+   *  toolbar's +Root can call it directly (dispatching a synthetic key event to
+   *  `document` never reached the stage's own key listener). */
+  createRoot(): void {
     const root = this.graph.addNode({ label: "" });
     this.changed();
     this.relayout();
