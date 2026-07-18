@@ -59,6 +59,8 @@ toolbar.innerHTML = `
   <button id="add" title="Add a root node">+ Root</button>
   <button id="link" title="Link the selected node to another (typed relationship) — or press L">+ Link</button>
   <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
+  <button id="undo" title="Undo (⌘/Ctrl-Z)" disabled>↶ Undo</button>
+  <button id="redo" title="Redo (⌘/Ctrl-Shift-Z)" disabled>↷ Redo</button>
   <label class="ndmm-toggle" title="Show the outline / list view beside the map"><input type="checkbox" id="list" checked> List</label>
   <label class="ndmm-toggle" title="Show the emergent schema derived from the sketch (node kinds + relation domain→range)"><input type="checkbox" id="schema"> Schema</label>
   <label class="ndmm-toggle" title="Toggle a snap-to grid for hand placement"><input type="checkbox" id="grid"> Grid</label>
@@ -155,6 +157,85 @@ function refreshUI(): void {
   refreshLint();
   refreshSchema();
   list.render(doc.graph, selectedNodeId);
+  scheduleHistory(); // coalesce edits into an undo checkpoint
+}
+
+// --- undo / redo (serialized-snapshot history) -----------------------------
+// The `.ndmm.md` text is the source of truth, so a snapshot is just stringify()
+// and restoring is parse() + remount — the same path as import. Edits within a
+// ~400ms burst coalesce into one checkpoint.
+let undoStack: string[] = [];
+let redoStack: string[] = [];
+let baseline = stringify(doc);
+let histTimer: number | undefined;
+
+function scheduleHistory(): void {
+  if (histTimer !== undefined) clearTimeout(histTimer);
+  histTimer = window.setTimeout(commitHistory, 400);
+}
+
+function commitHistory(): void {
+  if (histTimer !== undefined) { clearTimeout(histTimer); histTimer = undefined; }
+  const cur = stringify(doc);
+  if (cur === baseline) return; // view-only change, or nothing new
+  undoStack.push(baseline);
+  if (undoStack.length > 100) undoStack.shift();
+  baseline = cur;
+  redoStack = [];
+  updateHistoryButtons();
+}
+
+/** Reset history to the current doc (after import). */
+function resetHistory(): void {
+  if (histTimer !== undefined) { clearTimeout(histTimer); histTimer = undefined; }
+  undoStack = [];
+  redoStack = [];
+  baseline = stringify(doc);
+  updateHistoryButtons();
+}
+
+/** Replace the live doc with a serialized snapshot (remounts the renderer). */
+function loadSnapshot(text: string): void {
+  doc = parse(text);
+  modal.close();
+  renderer.destroy();
+  renderer = mount(doc.graph);
+  selectedNodeId = null;
+  inspector.show(null);
+  renderer.focusCanvas();
+  refreshBindingUI();
+  refreshFilters();
+  refreshLint();
+  refreshSchema();
+  list.render(doc.graph, selectedNodeId);
+}
+
+function undo(): void {
+  commitHistory(); // flush any pending burst first
+  const prev = undoStack.pop();
+  if (prev === undefined) return;
+  redoStack.push(baseline);
+  baseline = prev;
+  loadSnapshot(prev);
+  updateHistoryButtons();
+  status.textContent = "Undid last change";
+}
+
+function redo(): void {
+  const next = redoStack.pop();
+  if (next === undefined) return;
+  undoStack.push(baseline);
+  baseline = next;
+  loadSnapshot(next);
+  updateHistoryButtons();
+  status.textContent = "Redid change";
+}
+
+function updateHistoryButtons(): void {
+  const u = toolbar.querySelector<HTMLButtonElement>("#undo");
+  const r = toolbar.querySelector<HTMLButtonElement>("#redo");
+  if (u) u.disabled = undoStack.length === 0;
+  if (r) r.disabled = redoStack.length === 0;
 }
 
 /** Emergent schema view — node kinds + edge domain/range, derived from the sketch. */
@@ -401,6 +482,21 @@ toolbar.querySelector("#link")!.addEventListener("click", () => {
 
 toolbar.querySelector("#tidy")!.addEventListener("click", () => renderer.tidy());
 
+toolbar.querySelector("#undo")!.addEventListener("click", () => { undo(); renderer.focusCanvas(); });
+toolbar.querySelector("#redo")!.addEventListener("click", () => { redo(); renderer.focusCanvas(); });
+
+// ⌘/Ctrl-Z undo, ⌘/Ctrl-Shift-Z (or Ctrl-Y) redo. Skip while a text field is
+// focused so the browser's native text undo keeps working there.
+document.addEventListener("keydown", (e) => {
+  if (!(e.metaKey || e.ctrlKey)) return;
+  const el = document.activeElement as HTMLElement | null;
+  const inField = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+  if (inField) return;
+  const key = e.key.toLowerCase();
+  if (key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+  else if (key === "y") { e.preventDefault(); redo(); }
+});
+
 toolbar.querySelector<HTMLInputElement>("#grid")!.addEventListener("change", (e) => {
   renderer.setGrid((e.target as HTMLInputElement).checked);
 });
@@ -441,6 +537,7 @@ toolbar.querySelector("#import")!.addEventListener("click", () => {
     selectedNodeId = null;
     renderer.focusCanvas();
     refreshUI();
+    resetHistory(); // a fresh document starts a fresh undo history
     status.textContent = `imported: ${doc.title}`;
   });
   input.click();
@@ -452,5 +549,8 @@ toolbar.querySelector("#import")!.addEventListener("click", () => {
   stringify: () => stringify(doc),
   parse: (text: string) => parse(text),
   renderer: () => renderer,
+  undo,
+  redo,
+  history: () => ({ undo: undoStack.length, redo: redoStack.length }),
   Graph,
 };
