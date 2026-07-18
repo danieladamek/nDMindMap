@@ -16,7 +16,7 @@ import { ListView } from "./list.js";
 import { deriveSchema } from "./schema.js";
 import { InterrogationModal } from "./interrogate.js";
 import { ReaderModal } from "./reader.js";
-import { explodeInto } from "./explode.js";
+import { explodeInto, projectDocument, clearDocument } from "./explode.js";
 import type { DeleteImpact } from "./render.js";
 import type { GraphNode, GraphEdge } from "./model.js";
 
@@ -159,17 +159,25 @@ function interrogate(target: GraphNode | GraphEdge): void {
   else modal.openNode(target);
 }
 
-// Explosion Reader — load/paste a document and explode it into a map.
+// Explosion Reader — load/paste a document and explode it into a map. The graph
+// is canonical; the paper is a projection (projectDocument), so re-opening the
+// reader on an active document shows the current map, and Sync updates it in
+// place (clear + rebuild) rather than creating a duplicate.
 const reader = new ReaderModal(app, {
-  onExplode: (text, title, paragraphsAsNodes) => {
+  onExplode: (text, title, paragraphsAsNodes, docId) => {
+    const syncing = docId !== null && doc.graph.nodes.has(docId);
+    if (syncing) clearDocument(doc.graph, docId!);
     const result = explodeInto(doc.graph, text, title || undefined, { paragraphsAsNodes });
     renderer.relayout();
     renderer.selectNode(result.rootId);
     refreshUI();
     const nn = result.nodes === 1 ? "node" : "nodes";
-    const ee = result.edges === 1 ? "link" : "links";
-    status.textContent = `exploded into ${result.nodes} ${nn} · ${result.edges} part-of ${ee}`;
+    status.textContent = syncing
+      ? `synced document — ${result.nodes} ${nn}`
+      : `exploded into ${result.nodes} ${nn} · ${result.edges} part-of ${result.edges === 1 ? "link" : "links"}`;
+    return result.rootId;
   },
+  projection: (docId) => (doc.graph.nodes.has(docId) ? projectDocument(doc.graph, docId) : null),
 });
 
 // --- confirmation dialog ----------------------------------------------------

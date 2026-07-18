@@ -182,3 +182,53 @@ export function explodeInto(graph: Graph, text: string, title?: string, opts: Ex
 
   return { rootId: root.id, nodes: graph.nodes.size - startSize, edges };
 }
+
+// --- projection: graph → markdown (the paper is a view of the map) -----------
+
+/** Render a document subtree back to markdown. The inverse of `explodeInto`:
+ *  round-tripping a document leaves the same structure. Entity nodes (`@[label]`
+ *  targets) are NOT emitted — they already live inline in the notes. */
+export function projectDocument(graph: Graph, rootId: string): string {
+  const root = graph.nodes.get(rootId);
+  if (!root) return "";
+  const out: string[] = [];
+  const pushProse = (note: unknown): void => {
+    if (typeof note === "string" && note.trim()) out.push("", note.trim());
+  };
+
+  // The document root is the H1 title.
+  out.push(`# ${root.label}`.trimEnd());
+  pushProse(root.attrs.note);
+
+  const walk = (nodeId: string, headingLevel: number, bulletDepth: number): void => {
+    for (const child of graph.childrenOf(nodeId)) {
+      const kind = child.attrs.kind;
+      if (kind === "heading") {
+        const level = Math.min(headingLevel + 1, 6);
+        out.push("", `${"#".repeat(level)} ${child.label}`.trimEnd());
+        pushProse(child.attrs.note);
+        walk(child.id, level, 0);
+      } else if (kind === "bullet") {
+        out.push(`${"  ".repeat(bulletDepth)}- ${child.label}`);
+        pushProse(child.attrs.note);
+        walk(child.id, headingLevel, bulletDepth + 1);
+      } else if (kind === "entity") {
+        // linked entity — represented by @[label] in prose, not emitted here
+        continue;
+      } else {
+        // paragraph / section node: emit its prose (label is a derived summary)
+        pushProse(child.attrs.note);
+        walk(child.id, headingLevel, bulletDepth);
+      }
+    }
+  };
+  walk(root.id, 1, 0);
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+}
+
+/** Remove a document's structural subtree (for re-sync). Linked entity nodes,
+ *  which are roots reached only by `part-of`, survive and re-link on re-explode. */
+export function clearDocument(graph: Graph, rootId: string): void {
+  graph.removeSubtree(rootId);
+}

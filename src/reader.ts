@@ -19,8 +19,11 @@ import { renderMarkdown } from "./markdown.js";
 import type { LiveEditor } from "./live.js";
 
 export interface ReaderCallbacks {
-  /** Build a map from the (possibly annotated) document text. */
-  onExplode: (text: string, title: string, paragraphsAsNodes: boolean) => void;
+  /** Explode (docId null) or re-sync (docId set) the document into the map.
+   *  Returns the document's root id, which the reader keeps as the active doc. */
+  onExplode: (text: string, title: string, paragraphsAsNodes: boolean, docId: string | null) => string;
+  /** The current markdown projection of a document, or null if it's gone. */
+  projection: (docId: string) => string | null;
 }
 
 type Mode = "read" | "live" | "source";
@@ -35,6 +38,9 @@ export class ReaderModal {
   private modeButtons: Record<Mode, HTMLButtonElement> = {} as Record<Mode, HTMLButtonElement>;
   private mode: Mode = "source";
   private live: LiveEditor | null = null; // lazily mounted on first Live use
+  private currentDocId: string | null = null; // the document this reader is editing
+  private explodeBtn!: HTMLButtonElement;
+  private newBtn!: HTMLButtonElement;
 
   constructor(host: HTMLElement, private cb: ReaderCallbacks) {
     this.overlay = document.createElement("div");
@@ -51,8 +57,30 @@ export class ReaderModal {
   }
 
   open(): void {
+    // If we're editing an existing document, load its current projection so the
+    // reader reflects any edits made on the map (graph → paper).
+    if (this.currentDocId) {
+      const proj = this.projection(this.currentDocId);
+      if (proj !== null) this.textarea.value = proj;
+      else this.currentDocId = null; // the document was deleted
+    }
+    this.refreshActions();
     this.overlay.style.display = "flex";
-    void this.setMode(this.textarea.value.trim() ? this.mode : "source");
+    void this.setMode(this.textarea.value.trim() && this.currentDocId ? "read" : this.mode);
+  }
+
+  /** Reflect whether we're creating a new document or syncing the active one. */
+  private refreshActions(): void {
+    const editing = this.currentDocId !== null;
+    this.explodeBtn.textContent = editing ? "🔄 Sync to map" : "💥 Explode into map";
+    this.explodeBtn.title = editing
+      ? "Reconcile your edits back into the map (updates in place — no duplicate)"
+      : "Build a new map from this document";
+    this.newBtn.style.display = editing ? "inline-flex" : "none";
+  }
+
+  private get projection(): (docId: string) => string | null {
+    return this.cb.projection;
   }
 
   close(): void {
@@ -116,6 +144,21 @@ export class ReaderModal {
     openBtn.textContent = "Open .md / .txt…";
     openBtn.addEventListener("click", () => this.openFile());
 
+    // Start a fresh document instead of syncing the active one.
+    this.newBtn = document.createElement("button");
+    this.newBtn.type = "button";
+    this.newBtn.className = "ndmm-reader-open";
+    this.newBtn.textContent = "＋ New document";
+    this.newBtn.style.display = "none";
+    this.newBtn.title = "Stop editing the current document and explode a new one";
+    this.newBtn.addEventListener("click", () => {
+      this.currentDocId = null;
+      this.textarea.value = "";
+      this.titleInput.value = "";
+      this.refreshActions();
+      void this.setMode("source");
+    });
+
     const titleField = document.createElement("label");
     titleField.className = "ndmm-reader-title";
     titleField.append("Title ");
@@ -124,7 +167,7 @@ export class ReaderModal {
     this.titleInput.placeholder = "defaults to the first heading";
     titleField.append(this.titleInput);
 
-    src.append(seg, openBtn, titleField);
+    src.append(seg, openBtn, this.newBtn, titleField);
 
     // Panes: the rendered Read view and the raw Source textarea (one shown).
     const panes = document.createElement("div");
@@ -172,12 +215,12 @@ export class ReaderModal {
     cancel.className = "ndmm-reader-cancel";
     cancel.textContent = "Cancel";
     cancel.addEventListener("click", () => this.close());
-    const explode = document.createElement("button");
-    explode.type = "button";
-    explode.className = "ndmm-reader-explode";
-    explode.textContent = "💥 Explode into map";
-    explode.addEventListener("click", () => this.explode());
-    actions.append(makeNode, hint, spacer, splitLabel, cancel, explode);
+    this.explodeBtn = document.createElement("button");
+    this.explodeBtn.type = "button";
+    this.explodeBtn.className = "ndmm-reader-explode";
+    this.explodeBtn.textContent = "💥 Explode into map";
+    this.explodeBtn.addEventListener("click", () => this.explode());
+    actions.append(makeNode, hint, spacer, splitLabel, cancel, this.explodeBtn);
 
     panel.append(head, src, panes, actions);
     this.overlay.append(panel);
@@ -253,7 +296,8 @@ export class ReaderModal {
     this.syncFromLive();
     const text = this.textarea.value.trim();
     if (!text) { void this.setMode("source"); this.textarea.focus(); return; }
-    this.cb.onExplode(text, this.titleInput.value.trim(), this.splitToggle.checked);
+    // Explode a new document, or sync edits back into the active one (no dup).
+    this.currentDocId = this.cb.onExplode(text, this.titleInput.value.trim(), this.splitToggle.checked, this.currentDocId);
     this.close();
   }
 }
