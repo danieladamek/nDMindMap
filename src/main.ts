@@ -57,6 +57,13 @@ const toolbar = document.createElement("div");
 toolbar.className = "ndmm-toolbar";
 toolbar.innerHTML = `
   <span class="brand">nDMindMap <span class="dot">●</span></span>
+  <span class="ndmm-filegroup">
+    <button id="file-new" title="New map (⌘/Ctrl-N)">New</button>
+    <button id="file-open" title="Open a .ndmm.md file (⌘/Ctrl-O)">Open</button>
+    <button id="file-save" title="Save (⌘/Ctrl-S)">Save</button>
+    <button id="file-saveas" title="Save As… (⌘/Ctrl-Shift-S)">Save As</button>
+    <span id="filename" class="ndmm-filename"></span>
+  </span>
   <button id="add" title="Add a root node">+ Root</button>
   <button id="link" title="Link the selected node to another (typed relationship) — or press L">+ Link</button>
   <button id="tidy" title="Re-run the tidy layout, clearing hand-placed pins">Tidy</button>
@@ -71,8 +78,6 @@ toolbar.innerHTML = `
     <label>shape <select id="bind-shape" class="ndmm-bind"></select></label>
     <label>size <select id="bind-size" class="ndmm-bind"></select></label>
   </span>
-  <button id="export" title="Download this map as a .ndmm.md file">Export</button>
-  <button id="import" title="Load a .ndmm.md file, replacing the current map">Import</button>
   <span class="spacer"></span>
   <span class="hint" id="status"></span>
 `;
@@ -212,6 +217,146 @@ function deleteMessage(i: DeleteImpact): string {
   return head;
 }
 
+// --- file handling (New / Open / Save / Save As) ----------------------------
+// Uses the File System Access API where available (Chromium) so Save writes back
+// to the same file; falls back to download / file-input elsewhere.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const fsa = window as unknown as {
+  showOpenFilePicker?: (o?: unknown) => Promise<any[]>;
+  showSaveFilePicker?: (o?: unknown) => Promise<any>;
+};
+const FILE_TYPES = [{ description: "nDMindMap", accept: { "text/markdown": [".md"] } }];
+
+let fileHandle: any = null;
+let savedSnapshot = stringify(doc); // serialized doc as of the last save
+let currentName = "Untitled";
+
+function isDirty(): boolean {
+  return stringify(doc) !== savedSnapshot;
+}
+
+function markSaved(): void {
+  savedSnapshot = stringify(doc);
+  updateFileUI();
+}
+
+function updateFileUI(): void {
+  const dirty = isDirty();
+  const nameEl = toolbar.querySelector<HTMLSpanElement>("#filename");
+  if (nameEl) nameEl.textContent = (dirty ? "• " : "") + currentName;
+  const saveBtn = toolbar.querySelector<HTMLButtonElement>("#file-save");
+  if (saveBtn) saveBtn.disabled = !dirty;
+}
+
+function suggestedFileName(): string {
+  const base = (doc.title || currentName || "mindmap").trim().replace(/\s+/g, "-").toLowerCase() || "mindmap";
+  return `${base}.ndmm.md`;
+}
+
+function confirmDiscard(action: string): Promise<boolean> {
+  return confirmDialog({
+    title: "Discard unsaved changes?",
+    body: `“${currentName}” has unsaved changes. ${action} will discard them — Cancel to save first.`,
+    confirmLabel: "Discard",
+    danger: true,
+  });
+}
+
+async function writeHandle(handle: any, text: string): Promise<void> {
+  const w = await handle.createWritable();
+  await w.write(text);
+  await w.close();
+}
+
+async function newFile(): Promise<void> {
+  if (isDirty() && !(await confirmDiscard("Starting a new map"))) return;
+  applyDoc(parse("# nDMindMap: Untitled\n"));
+  fileHandle = null;
+  currentName = "Untitled";
+  resetHistory();
+  markSaved();
+  status.textContent = "New map";
+}
+
+async function openFile(): Promise<void> {
+  if (isDirty() && !(await confirmDiscard("Opening a file"))) return;
+  if (fsa.showOpenFilePicker) {
+    let handle: any;
+    try {
+      [handle] = await fsa.showOpenFilePicker({ types: FILE_TYPES });
+    } catch { return; } // user cancelled the picker
+    const file = await handle.getFile();
+    applyDoc(parse(await file.text()));
+    fileHandle = handle;
+    currentName = handle.name;
+    resetHistory();
+    markSaved();
+    status.textContent = `opened: ${currentName}`;
+  } else {
+    openViaInput();
+  }
+}
+
+async function saveFile(): Promise<void> {
+  if (!fileHandle) { await saveAsFile(); return; }
+  try {
+    await writeHandle(fileHandle, stringify(doc));
+    markSaved();
+    status.textContent = `saved: ${currentName}`;
+  } catch (err) {
+    status.textContent = `save failed: ${(err as Error).message}`;
+  }
+}
+
+async function saveAsFile(): Promise<void> {
+  const text = stringify(doc);
+  if (fsa.showSaveFilePicker) {
+    let handle: any;
+    try {
+      handle = await fsa.showSaveFilePicker({ suggestedName: suggestedFileName(), types: FILE_TYPES });
+    } catch { return; } // user cancelled
+    await writeHandle(handle, text);
+    fileHandle = handle;
+    currentName = handle.name;
+    markSaved();
+    status.textContent = `saved: ${currentName}`;
+  } else {
+    downloadFallback(text);
+    currentName = suggestedFileName();
+    markSaved();
+  }
+}
+
+/** Fallback save for browsers without the File System Access API. */
+function downloadFallback(text: string): void {
+  const blob = new Blob([text], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = suggestedFileName();
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Fallback open for browsers without the File System Access API. */
+function openViaInput(): void {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".md,.ndmm.md,text/markdown,text/plain";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    applyDoc(parse(await file.text()));
+    fileHandle = null;
+    currentName = file.name;
+    resetHistory();
+    markSaved();
+    status.textContent = `opened: ${currentName}`;
+  });
+  input.click();
+}
+
 /** One refresh for everything that mirrors graph state (bind UI, legend, list). */
 function refreshUI(): void {
   refreshBindingUI();
@@ -220,6 +365,7 @@ function refreshUI(): void {
   refreshSchema();
   list.render(doc.graph, selectedNodeId);
   scheduleHistory(); // coalesce edits into an undo checkpoint
+  updateFileUI(); // reflect dirty state / filename
 }
 
 // --- undo / redo (serialized-snapshot history) -----------------------------
@@ -256,9 +402,10 @@ function resetHistory(): void {
   updateHistoryButtons();
 }
 
-/** Replace the live doc with a serialized snapshot (remounts the renderer). */
-function loadSnapshot(text: string): void {
-  doc = parse(text);
+/** Swap in a new document and remount the renderer. Pure view/graph swap — it
+ *  touches neither undo history nor file state (callers own those). */
+function applyDoc(d: MindMapDoc): void {
+  doc = d;
   modal.close();
   renderer.destroy();
   renderer = mount(doc.graph);
@@ -270,6 +417,11 @@ function loadSnapshot(text: string): void {
   refreshLint();
   refreshSchema();
   list.render(doc.graph, selectedNodeId);
+}
+
+/** Replace the live doc with a serialized snapshot (undo/redo). */
+function loadSnapshot(text: string): void {
+  applyDoc(parse(text));
 }
 
 function undo(): void {
@@ -534,6 +686,10 @@ function mount(graph: Graph): Renderer {
 renderer = mount(doc.graph);
 renderer.focusCanvas();
 refreshUI();
+// The first layout assigns node @x,y positions, so re-baseline history and the
+// saved-marker to the laid-out doc — otherwise it reads as dirty on load.
+resetHistory();
+markSaved();
 
 // --- toolbar --------------------------------------------------------------
 
@@ -553,16 +709,29 @@ toolbar.querySelector("#tidy")!.addEventListener("click", () => renderer.tidy())
 toolbar.querySelector("#undo")!.addEventListener("click", () => { undo(); renderer.focusCanvas(); });
 toolbar.querySelector("#redo")!.addEventListener("click", () => { redo(); renderer.focusCanvas(); });
 
-// ⌘/Ctrl-Z undo, ⌘/Ctrl-Shift-Z (or Ctrl-Y) redo. Skip while a text field is
-// focused so the browser's native text undo keeps working there.
+// File menu.
+toolbar.querySelector("#file-new")!.addEventListener("click", () => void newFile());
+toolbar.querySelector("#file-open")!.addEventListener("click", () => void openFile());
+toolbar.querySelector("#file-save")!.addEventListener("click", () => void saveFile());
+toolbar.querySelector("#file-saveas")!.addEventListener("click", () => void saveAsFile());
+
+// ⌘/Ctrl-S save, ⌘/Ctrl-Shift-S save-as (work regardless of focus);
+// ⌘/Ctrl-Z undo, ⌘/Ctrl-Shift-Z (or Ctrl-Y) redo — skipped while a text field
+// is focused so the browser's native text undo keeps working there.
 document.addEventListener("keydown", (e) => {
   if (!(e.metaKey || e.ctrlKey)) return;
+  const key = e.key.toLowerCase();
+  if (key === "s") { e.preventDefault(); void (e.shiftKey ? saveAsFile() : saveFile()); return; }
   const el = document.activeElement as HTMLElement | null;
   const inField = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
   if (inField) return;
-  const key = e.key.toLowerCase();
   if (key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (key === "y") { e.preventDefault(); redo(); }
+});
+
+// Warn before leaving with unsaved changes.
+window.addEventListener("beforeunload", (e) => {
+  if (isDirty()) { e.preventDefault(); e.returnValue = ""; }
 });
 
 toolbar.querySelector<HTMLInputElement>("#grid")!.addEventListener("change", (e) => {
@@ -577,38 +746,6 @@ toolbar.querySelector<HTMLInputElement>("#list")!.addEventListener("change", (e)
 toolbar.querySelector<HTMLInputElement>("#schema")!.addEventListener("change", (e) => {
   schemaPanel.style.display = (e.target as HTMLInputElement).checked ? "block" : "none";
   refreshSchema();
-});
-
-toolbar.querySelector("#export")!.addEventListener("click", () => {
-  const text = stringify(doc);
-  const blob = new Blob([text], { type: "text/markdown" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${doc.title.replace(/\s+/g, "-").toLowerCase() || "mindmap"}.ndmm.md`;
-  a.click();
-  URL.revokeObjectURL(url);
-});
-
-toolbar.querySelector("#import")!.addEventListener("click", () => {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = ".md,.ndmm.md,text/markdown,text/plain";
-  input.addEventListener("change", async () => {
-    const file = input.files?.[0];
-    if (!file) return;
-    doc = parse(await file.text());
-    modal.close();
-    renderer.destroy();
-    renderer = mount(doc.graph);
-    inspector.show(null);
-    selectedNodeId = null;
-    renderer.focusCanvas();
-    refreshUI();
-    resetHistory(); // a fresh document starts a fresh undo history
-    status.textContent = `imported: ${doc.title}`;
-  });
-  input.click();
 });
 
 // Expose internals for console poking / tests (mirrors RiffRaft's window.__mic).
