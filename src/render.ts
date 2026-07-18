@@ -16,7 +16,7 @@
  */
 
 import type { Graph, GraphNode, GraphEdge } from "./model.js";
-import { CHILD_OF } from "./model.js";
+import { CHILD_OF, MENTIONS } from "./model.js";
 import { layoutTree, isPinned } from "./layout.js";
 import { ChannelResolver, nodeType, contrastText, type Shape } from "./visuals.js";
 import { lintGraph, type LintWarning } from "./lint.js";
@@ -61,6 +61,9 @@ export class Renderer {
   constructor(private host: HTMLElement, private graph: Graph, private opts: RendererOptions = {}) {
     this.gridSize = opts.gridSize ?? 20;
     this.resolver = new ChannelResolver(graph);
+    // Prose-link edges start hidden so notes don't clutter the map; the dimension
+    // filter chip reveals them on demand.
+    this.hiddenRelations.add(MENTIONS);
 
     this.svg = document.createElementNS(SVG_NS, "svg");
     this.svg.setAttribute("class", "ndmm-canvas");

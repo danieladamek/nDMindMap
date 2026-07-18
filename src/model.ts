@@ -36,6 +36,10 @@ export interface GraphEdge {
 /** The default relationship: an edge `[child] --child-of--> [parent]`. */
 export const CHILD_OF = "child-of";
 
+/** Prose-derived link from an interrogation `[[label]]`. Hidden on the map by
+ *  default (toggleable via the dimension filter) so notes don't clutter it. */
+export const MENTIONS = "mentions";
+
 /**
  * A registered, first-class type in the document's schema — a node type or an
  * edge type promoted from a one-off. `attrs` carries the type's parameters; for

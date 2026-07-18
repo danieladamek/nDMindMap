@@ -12,6 +12,7 @@
  */
 
 import type { Graph, GraphNode, GraphEdge } from "./model.js";
+import { MENTIONS } from "./model.js";
 import { nodeType } from "./visuals.js";
 import { nodeLevel } from "./semantics.js";
 
@@ -96,9 +97,9 @@ export class InterrogationModal {
       if (!target) target = this.graph.addNode({ label });
       if (target.id === node.id) continue;
       const exists = [...this.graph.edges.values()].some(
-        (e) => e.source === node.id && e.target === target!.id && e.relation === "mentions",
+        (e) => e.source === node.id && e.target === target!.id && e.relation === MENTIONS,
       );
-      if (!exists) this.graph.addEdge({ source: node.id, target: target.id, relation: "mentions" });
+      if (!exists) this.graph.addEdge({ source: node.id, target: target.id, relation: MENTIONS });
     }
   }
 
