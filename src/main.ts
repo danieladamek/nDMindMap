@@ -14,6 +14,8 @@ import { Renderer } from "./render.js";
 import { Inspector } from "./inspector.js";
 import { ListView } from "./list.js";
 import { deriveSchema } from "./schema.js";
+import { InterrogationModal } from "./interrogate.js";
+import type { GraphNode, GraphEdge } from "./model.js";
 
 const SEED = `# nDMindMap: Welcome
 
@@ -120,7 +122,31 @@ const list = new ListView(body, {
 body.append(stage);
 app.append(toolbar, body);
 
-const inspector = new Inspector(body, { onEdit: () => { renderer.relayout(); refreshUI(); } });
+const inspector = new Inspector(body, {
+  onEdit: () => { renderer.relayout(); refreshUI(); },
+  onInterrogate: (t) => interrogate(t),
+});
+
+// Interrogation modal — a focused, freeform view over one node or edge.
+const modal = new InterrogationModal(app, {
+  onChange: () => { renderer.relayout(); refreshUI(); },
+  onFocusNode: (id) => {
+    renderer.selectNode(id);
+    const n = doc.graph.nodes.get(id);
+    if (n) modal.openNode(n);
+  },
+  onFocusEdge: (id) => {
+    renderer.selectEdgeById(id);
+    const e = doc.graph.edges.get(id);
+    if (e) modal.openEdge(e);
+  },
+});
+
+/** Open the interrogation modal on a node or an edge. */
+function interrogate(target: GraphNode | GraphEdge): void {
+  if ("relation" in target) modal.openEdge(target);
+  else modal.openNode(target);
+}
 
 /** One refresh for everything that mirrors graph state (bind UI, legend, list). */
 function refreshUI(): void {
@@ -326,7 +352,9 @@ for (const [channel, sel] of Object.entries(bindSelects) as ["color" | "shape" |
 
 function mount(graph: Graph): Renderer {
   inspector.setGraph(graph);
+  modal.setGraph(graph);
   return new Renderer(stage, graph, {
+    onInterrogate: (t) => interrogate(t),
     onSelect: (n) => {
       selectedNodeId = n?.id ?? null;
       status.textContent = n
@@ -406,6 +434,7 @@ toolbar.querySelector("#import")!.addEventListener("click", () => {
     const file = input.files?.[0];
     if (!file) return;
     doc = parse(await file.text());
+    modal.close();
     renderer.destroy();
     renderer = mount(doc.graph);
     inspector.show(null);
@@ -421,6 +450,7 @@ toolbar.querySelector("#import")!.addEventListener("click", () => {
 (window as unknown as { __ndmm: unknown }).__ndmm = {
   doc: () => doc,
   stringify: () => stringify(doc),
+  parse: (text: string) => parse(text),
   renderer: () => renderer,
   Graph,
 };

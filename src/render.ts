@@ -31,6 +31,8 @@ export interface RendererOptions {
   onSelectEdge?: (edge: GraphEdge | null) => void;
   onLinkModeChange?: (active: boolean) => void;
   onChange?: () => void;
+  /** Open the interrogation modal on the selected node or edge (the `I` key). */
+  onInterrogate?: (target: GraphNode | GraphEdge) => void;
   gridSize?: number;
 }
 
@@ -63,7 +65,13 @@ export class Renderer {
     this.svg = document.createElementNS(SVG_NS, "svg");
     this.svg.setAttribute("class", "ndmm-canvas");
     this.svg.setAttribute("tabindex", "-1");
-    this.svg.innerHTML = `<defs><pattern id="ndmm-grid" width="${this.gridSize}" height="${this.gridSize}" patternUnits="userSpaceOnUse"><path d="M ${this.gridSize} 0 L 0 0 0 ${this.gridSize}" fill="none" class="ndmm-gridline"/></pattern></defs>`;
+    // The arrowhead marker uses `context-stroke` so it inherits each edge's own
+    // colour (crosslink violet, or danger red for a category error). `orient`
+    // auto-start-reverse lets one marker serve both ends of a bidirectional edge.
+    this.svg.innerHTML = `<defs>` +
+      `<pattern id="ndmm-grid" width="${this.gridSize}" height="${this.gridSize}" patternUnits="userSpaceOnUse"><path d="M ${this.gridSize} 0 L 0 0 0 ${this.gridSize}" fill="none" class="ndmm-gridline"/></pattern>` +
+      `<marker id="ndmm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker>` +
+      `</defs>`;
     this.gridRect = document.createElementNS(SVG_NS, "rect");
     this.gridRect.setAttribute("class", "ndmm-gridbg");
     this.gridRect.setAttribute("x", "0");
@@ -216,18 +224,28 @@ export class Renderer {
         const idx = group.indexOf(e.id);
         const dx = bx - ax, dy = by - ay;
         const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len; // unit direction a→b
         const nx = -dy / len, ny = dx / len; // unit normal
         const off = (idx - (group.length - 1) / 2) * 26;
+
+        // Directionality (reserved `dir` attr): pull the arrow end(s) back to the
+        // node boundary so the arrowhead clears the box. `both` = bidirectional.
+        const bidir = e.attrs.dir === "both";
+        const insetB = Math.min(this.nodeWidth(b), this.nodeHeight(b)) / 2 + 4;
+        const insetA = bidir ? Math.min(this.nodeWidth(a), this.nodeHeight(a)) / 2 + 4 : 0;
+        const sx = ax + ux * insetA, sy = ay + uy * insetA;
+        const ex = bx - ux * insetB, ey = by - uy * insetB;
+
         // Quadratic control at 2× the apex offset so the curve peaks at its middle.
-        const cxq = (ax + bx) / 2 + nx * off * 2;
-        const cyq = (ay + by) / 2 + ny * off * 2;
-        const d = `M ${ax} ${ay} Q ${cxq} ${cyq} ${bx} ${by}`;
+        const cxq = (sx + ex) / 2 + nx * off * 2;
+        const cyq = (sy + ey) / 2 + ny * off * 2;
+        const d = `M ${sx} ${sy} Q ${cxq} ${cyq} ${ex} ${ey}`;
         // Stagger each sibling edge's label *along* its curve (different t) so a
         // stack of relations on one short edge reads instead of overprinting.
         const t = (idx + 1) / (group.length + 1);
         const mt = 1 - t;
-        const mx = mt * mt * ax + 2 * mt * t * cxq + t * t * bx;
-        const my = mt * mt * ay + 2 * mt * t * cyq + t * t * by;
+        const mx = mt * mt * sx + 2 * mt * t * cxq + t * t * ex;
+        const my = mt * mt * sy + 2 * mt * t * cyq + t * t * ey;
 
         const cg = document.createElementNS(SVG_NS, "g");
         const warned = warnedEdges.has(e.id);
@@ -243,6 +261,8 @@ export class Renderer {
         const line = document.createElementNS(SVG_NS, "path");
         line.setAttribute("d", d);
         line.setAttribute("class", "ndmm-crosslink");
+        line.setAttribute("marker-end", "url(#ndmm-arrow)");
+        if (bidir) line.setAttribute("marker-start", "url(#ndmm-arrow)");
         cg.append(line);
 
         const label = document.createElementNS(SVG_NS, "text");
@@ -531,6 +551,16 @@ export class Renderer {
         case "l":
         case "L":
           if (sel) { e.preventDefault(); this.startLink(); }
+          break;
+        case "i":
+        case "I":
+          if (this.selectedEdgeId) {
+            const ed = this.graph.edges.get(this.selectedEdgeId);
+            if (ed) { e.preventDefault(); this.opts.onInterrogate?.(ed); }
+          } else if (sel) {
+            const n = this.graph.nodes.get(sel);
+            if (n) { e.preventDefault(); this.opts.onInterrogate?.(n); }
+          }
           break;
         case "Escape":
           if (this.linkingFrom) { e.preventDefault(); this.cancelLink(); }

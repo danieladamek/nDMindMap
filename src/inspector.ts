@@ -9,7 +9,7 @@
  */
 
 import type { Graph, GraphNode, GraphEdge, Scalar } from "./model.js";
-import { SHAPES, COLORS, SIZES, customAttrs, nodeShape, nodeColor, nodeSizeKey, nodeType } from "./visuals.js";
+import { SHAPES, COLORS, SIZES, RESERVED_ATTRS, customAttrs, nodeShape, nodeColor, nodeSizeKey, nodeType } from "./visuals.js";
 import { SUGGESTED_LEVELS, EDGE_SEMANTICS, semanticsOf, nodeLevel } from "./semantics.js";
 import { lintEdge } from "./lint.js";
 
@@ -18,6 +18,8 @@ const CHANNEL_KEYS = ["color", "shape", "size"] as const;
 
 export interface InspectorOptions {
   onEdit: () => void;
+  /** Open the interrogation modal (freeform focus view) on this node/edge. */
+  onInterrogate?: (target: GraphNode | GraphEdge) => void;
 }
 
 /** Everything the edge editor needs that isn't on the edge itself. */
@@ -243,12 +245,26 @@ export class Inspector {
     // Attributes (dimensions)
     const attrsField = this.attrsSection("Attributes (dimensions)", n.attrs, customAttrs(n));
 
+    // Interrogate — open the freeform focus view.
+    const interrogate = this.interrogateButton(() => this.opts.onInterrogate?.(n));
+
     // Id (read-only)
     const idNote = document.createElement("div");
     idNote.className = "insp-id";
     idNote.textContent = `id: ${n.id}`;
 
-    this.el.append(labelField, typeField, levelField, shapeField, colorField, sizeField, attrsField, idNote);
+    this.el.append(labelField, typeField, levelField, shapeField, colorField, sizeField, attrsField, interrogate, idNote);
+  }
+
+  /** A prominent "Interrogate" action, shared by the node and edge editors. */
+  private interrogateButton(onClick: () => void): HTMLElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "insp-interrogate";
+    btn.textContent = "🔎 Interrogate";
+    btn.title = "Open a focused, freeform view to brainstorm and traverse from here (or press I)";
+    btn.addEventListener("click", onClick);
+    return btn;
   }
 
   /** Distinct abstraction levels already assigned across the graph. */
@@ -367,8 +383,10 @@ export class Inspector {
       warnBox.append(msg, fix);
     }
 
-    // Parameters (edge attributes — parameterized edges)
-    const params = this.attrsSection("Parameters", e.attrs, Object.entries(e.attrs));
+    // Parameters (edge attributes — parameterized edges; hide reserved keys)
+    const params = this.attrsSection("Parameters", e.attrs, Object.entries(e.attrs).filter(([k]) => !RESERVED_ATTRS.has(k)));
+
+    const interrogate = this.interrogateButton(() => this.opts.onInterrogate?.(e));
 
     const del = document.createElement("button");
     del.type = "button";
@@ -380,7 +398,7 @@ export class Inspector {
     idNote.className = "insp-id";
     idNote.textContent = `edge: ${e.id}`;
 
-    this.el.append(relField, conn, ...(warnBox ? [warnBox] : []), params, del, idNote);
+    this.el.append(relField, conn, ...(warnBox ? [warnBox] : []), params, interrogate, del, idNote);
     if (focusRelation) { relInput.focus(); relInput.select(); }
   }
 
