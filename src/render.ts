@@ -646,6 +646,10 @@ export class Renderer {
       if (!n) return;
       // Second press on the same node within the window → edit its label (F2).
       if (lastDownId === n.id && e.timeStamp - lastDownTime < DOUBLE_MS) {
+        // Suppress the pointerdown's default focus, which fires *after* this
+        // handler and would otherwise steal focus back from the editor we're
+        // about to open (its blur then commits and closes it instantly).
+        e.preventDefault();
         lastDownId = null;
         this.startEdit(n.id);
         return; // don't arm a drag
@@ -693,6 +697,10 @@ export class Renderer {
     // every input path (some automation / assistive tech) emits pointer events,
     // whereas click is universal. Idempotent with the pointerdown selection above.
     this.svg.addEventListener("click", (e) => {
+      // A double-click ends with a trailing `click`; if it just opened the label
+      // editor, don't steal focus back to the stage (which would blur+commit and
+      // close the editor instantly). While editing, the click is inert here.
+      if (this.editing) return;
       this.host.focus();
       const nodeEl = (e.target as Element).closest(".ndmm-node") as SVGGElement | null;
       const edgeEl = (e.target as Element).closest("[data-edge-id]") as SVGGElement | null;
