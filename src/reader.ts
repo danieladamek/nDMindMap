@@ -195,7 +195,14 @@ export class ReaderModal {
     panes.className = "ndmm-reader-panes";
 
     this.readPane = document.createElement("article");
-    this.readPane.className = "ndmm-md ndmm-reader-read";
+    this.readPane.className = "ndmm-md ndmm-reader-read show-ticks";
+    // Click a @[link] or heading in the rendered text → cross-highlight the sidebar.
+    this.readPane.addEventListener("click", (e) => {
+      const link = (e.target as Element).closest<HTMLElement>(".ndmm-md-link[data-link]");
+      if (link) { this.crossHighlight("link", link.dataset.link!); return; }
+      const head = (e.target as Element).closest<HTMLElement>("[data-doc-heading]");
+      if (head) this.crossHighlight("heading", head.dataset.docHeading!);
+    });
 
     this.liveHost = document.createElement("div");
     this.liveHost.className = "ndmm-reader-live";
@@ -240,6 +247,14 @@ export class ReaderModal {
     this.splitToggle.type = "checkbox";
     this.splitToggle.checked = true;
     splitLabel.append(this.splitToggle, document.createTextNode(" Split paragraphs"));
+    const ticksLabel = document.createElement("label");
+    ticksLabel.className = "ndmm-reader-split";
+    ticksLabel.title = "Show a ✓ tick on each @[link] in the Read view.";
+    const ticks = document.createElement("input");
+    ticks.type = "checkbox";
+    ticks.checked = true;
+    ticks.addEventListener("change", () => this.readPane.classList.toggle("show-ticks", ticks.checked));
+    ticksLabel.append(ticks, document.createTextNode(" Link ticks"));
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "ndmm-reader-cancel";
@@ -250,7 +265,7 @@ export class ReaderModal {
     this.explodeBtn.className = "ndmm-reader-explode";
     this.explodeBtn.textContent = "💥 Explode into map";
     this.explodeBtn.addEventListener("click", () => this.explode());
-    actions.append(makeNode, hint, spacer, splitLabel, cancel, this.explodeBtn);
+    actions.append(makeNode, hint, spacer, ticksLabel, splitLabel, cancel, this.explodeBtn);
 
     panel.append(head, src, body, actions);
     this.overlay.append(panel);
@@ -297,6 +312,10 @@ export class ReaderModal {
     row.type = "button";
     row.className = "ndmm-sb-item" + (item.linked ? " is-linked" : "");
     row.style.paddingLeft = `${8 + depth * 14}px`;
+    // Cross-highlight keys: headings/links map to Read-view elements by label.
+    const hl = item.kind === "heading" ? "heading" : (item.linked || item.kind === "entity" ? "link" : "");
+    row.dataset.label = (item.label || "").toLowerCase();
+    if (hl) row.dataset.hl = hl;
     if (item.sec) {
       const sec = document.createElement("span");
       sec.className = "ndmm-sb-sec";
@@ -313,9 +332,25 @@ export class ReaderModal {
       tag.textContent = "link";
       row.append(tag);
     }
-    row.addEventListener("click", () => this.cb.onSelect(item.id));
+    row.addEventListener("click", () => {
+      this.cb.onSelect(item.id); // select on the map
+      if (hl) this.crossHighlight(hl as "link" | "heading", row.dataset.label!);
+    });
     container.append(row);
     for (const c of item.children) this.appendItem(container, c, depth + 1);
+  }
+
+  /** Highlight the matching element in both the Read view and the sidebar, and
+   *  scroll each counterpart into view. Matched by normalised label. */
+  private crossHighlight(kind: "link" | "heading", key: string): void {
+    for (const e of this.overlay.querySelectorAll(".is-highlight")) e.classList.remove("is-highlight");
+    const sb = [...this.sidebarEl.querySelectorAll<HTMLElement>(".ndmm-sb-item")].filter((el) => el.dataset.label === key && el.dataset.hl === kind);
+    sb.forEach((e) => e.classList.add("is-highlight"));
+    sb[0]?.scrollIntoView({ block: "nearest" });
+    const sel = kind === "link" ? `.ndmm-md-link[data-link="${CSS.escape(key)}"]` : `[data-doc-heading="${CSS.escape(key)}"]`;
+    const rd = [...this.readPane.querySelectorAll<HTMLElement>(sel)];
+    rd.forEach((e) => e.classList.add("is-highlight"));
+    rd[0]?.scrollIntoView({ block: "nearest" });
   }
 
   private async setMode(m: Mode): Promise<void> {

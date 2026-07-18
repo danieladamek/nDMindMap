@@ -543,3 +543,17 @@ body {
   font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--crosslink);
   border: 1px solid var(--crosslink); border-radius: 999px; padding: 0 5px; margin-left: auto; flex: none; opacity: 0.75;
 }
+
+/* Phase D: text ↔ sidebar cross-highlight + link ticks */
+.ndmm-md-link { cursor: pointer; }
+.ndmm-reader-read.show-ticks .ndmm-md-link::after {
+  content: " ✓"; font-size: 0.8em; color: var(--crosslink); opacity: 0.8;
+}
+.ndmm-md .is-highlight, .ndmm-md-link.is-highlight {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.ndmm-sb-item.is-highlight {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 1px solid var(--accent); outline-offset: -1px;
+}

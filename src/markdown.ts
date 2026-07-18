@@ -40,7 +40,10 @@ function inline(text: string): string {
   s = s.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, "$1<em>$2</em>");
   s = s.replace(/(^|[^\w])_([^_\s][^_]*?)_/g, "$1<em>$2</em>");
   // Our intra-map link token → highlighted chip (reserved [[ ]] left literal).
-  s = s.replace(/@\[([^\]]+)\]/g, '<span class="ndmm-md-link">@[$1]</span>');
+  // data-link carries the (normalised) label so the reader can cross-highlight
+  // it against the link sidebar.
+  s = s.replace(/@\[([^\]]+)\]/g, (_m, l: string) =>
+    `<span class="ndmm-md-link" data-link="${l.trim().toLowerCase().replace(/"/g, "&quot;")}">@[${l}]</span>`);
   // Restore protected code spans.
   s = s.replace(new RegExp(`${SEP}(\\d+)${SEP}`, "g"), (_m, i: string) => codes[Number(i)]);
   return s;
@@ -80,7 +83,14 @@ export function renderMarkdown(md: string): string {
 
     // Heading.
     const h = trimmed.match(/^(#{1,6})\s+(.*)$/);
-    if (h) { flushPara(); closeLists(); html.push(`<h${h[1].length}>${inline(h[2].trim())}</h${h[1].length}>`); continue; }
+    if (h) {
+      flushPara(); closeLists();
+      // data-doc-heading carries the normalised heading text (@[]-stripped) so
+      // the reader can cross-highlight it against the sidebar's section item.
+      const key = h[2].replace(/@\[([^\]]+)\]/g, "$1").trim().toLowerCase().replace(/"/g, "&quot;");
+      html.push(`<h${h[1].length} data-doc-heading="${key}">${inline(h[2].trim())}</h${h[1].length}>`);
+      continue;
+    }
 
     // Horizontal rule.
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) { flushPara(); closeLists(); html.push("<hr>"); continue; }
